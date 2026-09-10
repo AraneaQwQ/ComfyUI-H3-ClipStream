@@ -1,0 +1,6 @@
+# ComfyUI already provides torch and safetensors; listed for standalone use.
+torch>=2.1.0
+safetensors>=0.4.0
+# Optional: only used to resample `context_audio` when its sample rate differs
+# from the H3 audio VAE. Not required when chaining via `context_latent`.
+# torchaudio

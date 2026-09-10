@@ -1,0 +1,10 @@
+# Caches and local env only.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.git/
+.github/
+.cursor/
+.DS_Store
+*.safetensors
