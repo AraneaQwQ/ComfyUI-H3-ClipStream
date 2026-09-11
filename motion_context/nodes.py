@@ -1193,9 +1193,9 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3MotionContextChain": MiniMaxH3MotionContextChain,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3MotionContext": "H3 Motion Context",
-    "MiniMaxH3MotionContextTrim": "H3 Motion Context Trim",
-    "MiniMaxH3MotionContextSaveLatent": "H3 Motion Context Save Latent",
-    "MiniMaxH3MotionContextLoadLatent": "H3 Motion Context Load Latent",
-    "MiniMaxH3MotionContextChain": "H3 Motion Context Chain",
+    "MiniMaxH3MotionContext": "H3 Motion Context (ClipStream)",
+    "MiniMaxH3MotionContextTrim": "H3 Motion Context Trim (ClipStream)",
+    "MiniMaxH3MotionContextSaveLatent": "H3 Motion Context Save Latent (ClipStream)",
+    "MiniMaxH3MotionContextLoadLatent": "H3 Motion Context Load Latent (ClipStream)",
+    "MiniMaxH3MotionContextChain": "H3 Motion Context Chain (ClipStream)",
 }

@@ -442,5 +442,5 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3MotionContextSeamProbe": MiniMaxH3MotionContextSeamProbe,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3MotionContextSeamProbe": "H3 Motion Context Seam Probe",
+    "MiniMaxH3MotionContextSeamProbe": "H3 Motion Context Seam Probe (ClipStream)",
 }
