@@ -201,8 +201,8 @@ class MiniMaxClipBinPickerNode:
             }
         }
 
-    RETURN_TYPES = ("LATENT", "IMAGE", "IMAGE", "STRING", "STRING")
-    RETURN_NAMES = ("latent", "tail_frame", "first_frame", "prompt", "clip_id")
+    RETURN_TYPES = ("LATENT", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("latent", "tail_frame", "first_frame", "prompt", "clip_id", "project_name")
     FUNCTION = "pick_clip"
     CATEGORY = "MiniMaxH3/ClipStream"
 
@@ -234,7 +234,7 @@ class MiniMaxClipBinPickerNode:
                 placeholder_tensor = pil_to_tensor(card)
                 return {
                     "ui": {"images": []},
-                    "result": (None, placeholder_tensor, placeholder_tensor, "", "[INITIAL_GENERATION]")
+                    "result": (None, placeholder_tensor, placeholder_tensor, "", "[INITIAL_GENERATION]", p_name)
                 }
 
             # Strict Chaining with an empty bin -> loud failure.
@@ -264,7 +264,7 @@ class MiniMaxClipBinPickerNode:
 
         return {
             "ui": {"images": []},
-            "result": (out_latent, tail_tensor, first_tensor, prompt_str, target_clip_id)
+            "result": (out_latent, tail_tensor, first_tensor, prompt_str, target_clip_id, p_name)
         }
 
 
