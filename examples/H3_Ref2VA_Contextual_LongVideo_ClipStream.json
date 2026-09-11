@@ -1038,7 +1038,7 @@
   },
   {
    "id": 461,
-   "type": "MiniMaxH3MotionContext",
+   "type": "MiniMaxH3MotionContextClipStream",
    "pos": [
     -4150,
     3710
@@ -1112,7 +1112,7 @@
    "properties": {
     "cnr_id": "comfyui-h3-motion-context",
     "ver": "658ba11ae91737391a247cf9758d0063c43491b3",
-    "Node name for S&R": "MiniMaxH3MotionContext",
+    "Node name for S&R": "MiniMaxH3MotionContextClipStream",
     "ue_properties": {
      "widget_ue_connectable": {},
      "version": "7.8",
@@ -1238,7 +1238,7 @@
   },
   {
    "id": 462,
-   "type": "MiniMaxH3MotionContextTrim",
+   "type": "MiniMaxH3MotionContextTrimClipStream",
    "pos": [
     -4150,
     3960
@@ -1292,7 +1292,7 @@
    "properties": {
     "cnr_id": "comfyui-h3-motion-context",
     "ver": "658ba11ae91737391a247cf9758d0063c43491b3",
-    "Node name for S&R": "MiniMaxH3MotionContextTrim",
+    "Node name for S&R": "MiniMaxH3MotionContextTrimClipStream",
     "ue_properties": {
      "widget_ue_connectable": {
       "trim_frames": true

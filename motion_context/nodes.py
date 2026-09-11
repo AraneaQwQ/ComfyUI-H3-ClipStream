@@ -1186,16 +1186,16 @@ class MiniMaxH3MotionContextChain:
 
 
 NODE_CLASS_MAPPINGS = {
-    "MiniMaxH3MotionContext": MiniMaxH3MotionContext,
-    "MiniMaxH3MotionContextTrim": MiniMaxH3MotionContextTrim,
-    "MiniMaxH3MotionContextSaveLatent": MiniMaxH3MotionContextSaveLatent,
-    "MiniMaxH3MotionContextLoadLatent": MiniMaxH3MotionContextLoadLatent,
-    "MiniMaxH3MotionContextChain": MiniMaxH3MotionContextChain,
+    "MiniMaxH3MotionContextClipStream": MiniMaxH3MotionContext,
+    "MiniMaxH3MotionContextTrimClipStream": MiniMaxH3MotionContextTrim,
+    "MiniMaxH3MotionContextSaveLatentClipStream": MiniMaxH3MotionContextSaveLatent,
+    "MiniMaxH3MotionContextLoadLatentClipStream": MiniMaxH3MotionContextLoadLatent,
+    "MiniMaxH3MotionContextChainClipStream": MiniMaxH3MotionContextChain,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3MotionContext": "H3 Motion Context (ClipStream)",
-    "MiniMaxH3MotionContextTrim": "H3 Motion Context Trim (ClipStream)",
-    "MiniMaxH3MotionContextSaveLatent": "H3 Motion Context Save Latent (ClipStream)",
-    "MiniMaxH3MotionContextLoadLatent": "H3 Motion Context Load Latent (ClipStream)",
-    "MiniMaxH3MotionContextChain": "H3 Motion Context Chain (ClipStream)",
+    "MiniMaxH3MotionContextClipStream": "H3 Motion Context (ClipStream)",
+    "MiniMaxH3MotionContextTrimClipStream": "H3 Motion Context Trim (ClipStream)",
+    "MiniMaxH3MotionContextSaveLatentClipStream": "H3 Motion Context Save Latent (ClipStream)",
+    "MiniMaxH3MotionContextLoadLatentClipStream": "H3 Motion Context Load Latent (ClipStream)",
+    "MiniMaxH3MotionContextChainClipStream": "H3 Motion Context Chain (ClipStream)",
 }

@@ -1,9 +1,9 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const LOAD = "MiniMaxH3MotionContextLoadLatent";
-const SAVE = "MiniMaxH3MotionContextSaveLatent";
-const CHAIN = "MiniMaxH3MotionContextChain";
+const LOAD = "MiniMaxH3MotionContextLoadLatentClipStream";
+const SAVE = "MiniMaxH3MotionContextSaveLatentClipStream";
+const CHAIN = "MiniMaxH3MotionContextChainClipStream";
 const MAX = 9999;
 
 const CSS = `
