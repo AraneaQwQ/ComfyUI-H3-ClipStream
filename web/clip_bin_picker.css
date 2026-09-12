@@ -190,28 +190,6 @@
     gap: 3px;
 }
 
-/* Rating Stars */
-.minimax-clip-rating {
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    font-size: 11px;
-    color: #eab308;
-}
-
-.minimax-clip-star {
-    cursor: pointer;
-    transition: transform 0.1s ease;
-}
-
-.minimax-clip-star:hover {
-    transform: scale(1.25);
-}
-
-.minimax-clip-star.empty {
-    color: #475569;
-}
-
 /* Shot Tag Name */
 .minimax-clip-shot-name {
     font-size: 11px;
@@ -583,5 +561,35 @@
 .minimax-modal-cancel-btn:hover {
     background: #334155;
     color: #ffffff;
+}
+
+/* ===== Dual Clip Variant Badges ===== */
+.minimax-clip-variants {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.variant-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    line-height: 1.4;
+}
+
+.variant-badge.variant-a {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.variant-badge.variant-b {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
 }
 

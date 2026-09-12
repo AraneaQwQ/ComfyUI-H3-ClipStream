@@ -18,9 +18,72 @@ from .clip_bin_manager import (
     load_project_index,
     save_project_index,
     rebuild_project_index,
+    probe_video_duration,
     VIDEO_EXTENSIONS,
     resolve_source_video_path,
 )
+
+
+def _probe_and_fix_durations(project_name: str, clip_id: str, entry: Dict[str, Any], clip_dir: str) -> bool:
+    """Lazily measures real video durations for clips saved before probing existed.
+
+    Only probes entries whose duration_source is not yet 'probed'; the result is
+    cached back into meta.json + index so each clip pays this cost exactly once."""
+    fixed = False
+    if not entry.get("variants"):
+        vf = str(entry.get("video_file") or "")
+        if vf and os.path.isfile(os.path.join(clip_dir, vf)) and entry.get("duration_source") != "probed":
+            d = probe_video_duration(os.path.join(clip_dir, vf))
+            if d is not None:
+                entry["duration_seconds"] = round(d, 2)
+                entry["duration_source"] = "probed"
+                fixed = True
+    else:
+        for v in (entry.get("variants") or {}).values():
+            if not isinstance(v, dict) or not v.get("has_latent"):
+                continue
+            vf = str(v.get("video_file") or "")
+            if vf and os.path.isfile(os.path.join(clip_dir, vf)) and v.get("duration_source") != "probed":
+                d = probe_video_duration(os.path.join(clip_dir, vf))
+                if d is not None:
+                    v["duration_seconds"] = round(d, 2)
+                    v["duration_source"] = "probed"
+                    fixed = True
+    return fixed
+
+
+_FRONTEND_ONLY_KEYS = {"thumbnail_file", "subfolder", "thumbnail_url", "video_url"}
+
+
+def _persist_clip_entry(project_name: str, clip_id: str, entry: Dict[str, Any]) -> None:
+    """Writes corrected fields back into both the project index and meta.json."""
+    clean = {k: v for k, v in entry.items() if k not in _FRONTEND_ONLY_KEYS}
+    idx = load_project_index(project_name)
+    replaced = False
+    clips = []
+    for c in idx.get("clips", []):
+        if c.get("clip_id") == clip_id:
+            merged = dict(c)
+            merged.update(clean)
+            clips.append(merged)
+            replaced = True
+        else:
+            clips.append(c)
+    if not replaced:
+        return
+    idx["clips"] = clips
+    save_project_index(project_name, idx)
+
+    meta_path = os.path.join(get_project_dir(project_name), clip_id, "meta.json")
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta.update(clean)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("[Clip Bin API] Failed to persist probed duration for '%s': %s", clip_id, e)
 
 def get_project_clips_api(project_name: str) -> Dict[str, Any]:
     """Retrieves full clip metadata and relative thumbnail paths for the frontend."""
@@ -40,7 +103,7 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
         try:
             subfolder = os.path.relpath(clip_dir, base_dir)
         except Exception:
-            subfolder = os.path.join("minimax_h3_bins", p_name, clip_id)
+            subfolder = os.path.join("h3-clipstream", p_name, clip_id)
 
         # Check existing preview files
         tail_path = os.path.join(clip_dir, "tail_frame.png")
@@ -88,6 +151,10 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
         has_video = bool(video_file and os.path.isfile(os.path.join(clip_dir, video_file)))
         video_url = f"/view?filename={video_file}&subfolder={subfolder}&type=output" if has_video else ""
 
+        # Self-heal: measure real durations for clips saved before probing existed (one-time per clip)
+        if _probe_and_fix_durations(p_name, clip_id, c, clip_dir):
+            _persist_clip_entry(p_name, clip_id, c)
+
         enriched = dict(c)
         enriched["thumbnail_file"] = preview_file
         enriched["subfolder"] = subfolder
@@ -103,36 +170,6 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
         "available_projects": list_projects(),
         "clips": enriched_clips,
     }
-
-
-def update_clip_rating_api(project_name: str, clip_id: str, new_rating: int) -> bool:
-    """Updates the rating of a specific clip across both index and meta.json."""
-    p_name = (project_name or "Default_Project").strip()
-    rating = max(1, min(5, int(new_rating)))
-    idx = load_project_index(p_name)
-    updated = False
-
-    for c in idx.get("clips", []):
-        if c.get("clip_id") == clip_id:
-            c["rating"] = rating
-            updated = True
-            break
-
-    if updated:
-        save_project_index(p_name, idx)
-        # Also update clip's own meta.json
-        clip_meta_path = os.path.join(get_project_dir(p_name), clip_id, "meta.json")
-        if os.path.isfile(clip_meta_path):
-            try:
-                with open(clip_meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                meta["rating"] = rating
-                with open(clip_meta_path, "w", encoding="utf-8") as f:
-                    json.dump(meta, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                logger.warning("[Clip Bin API] Failed to update meta.json rating: %s", e)
-
-    return updated
 
 
 def register_clip_bin_routes() -> None:
@@ -156,19 +193,5 @@ def register_clip_bin_routes() -> None:
         project = request.rel_url.query.get("project", "Default_Project")
         data = get_project_clips_api(project)
         return web.json_response(data)
-
-    @routes.post("/minimax/clip_bin/rate")
-    async def handle_rate_clip(request):
-        try:
-            body = await request.json()
-            project = body.get("project", "Default_Project")
-            clip_id = body.get("clip_id")
-            rating = body.get("rating", 3)
-            if not clip_id:
-                return web.json_response({"success": False, "error": "Missing clip_id"}, status=400)
-            success = update_clip_rating_api(project, clip_id, rating)
-            return web.json_response({"success": success})
-        except Exception as e:
-            return web.json_response({"success": False, "error": str(e)}, status=500)
 
     logger.info("[Clip Bin API] Successfully registered /minimax/clip_bin routes with PromptServer.")

@@ -27,7 +27,7 @@ app.registerExtension({
     name: "MiniMaxH3.ClipBinPicker",
 
     async beforeRegisterNodeDef(nodeType, nodeData, appInstance) {
-        if (nodeData.name !== "MiniMaxClipBinPicker") {
+        if (nodeData.name !== "MiniMaxClipBinPicker" && nodeData.name !== "MiniMaxClipBinDualPicker") {
             return;
         }
 
@@ -183,10 +183,20 @@ function setupClipBinPickerWidget(node) {
                 <span class="label">归属项目:</span>
                 <span class="value">${projectName}</span>
             </div>
-            <div class="minimax-modal-row">
-                <span class="label">规格参数:</span>
-                <span class="value">${clip.frames || 124} 帧 | ${clip.duration_seconds || 5.2} 秒 (${clip.fps || 24} fps)</span>
-            </div>
+            ${(() => {
+                if (clip.variants) {
+                    const rows = Object.entries(clip.variants)
+                        .filter(([, v]) => v && v.has_latent)
+                        .map(([label, v]) => `
+                            <div class="minimax-modal-row">
+                                <span class="label">${label} 时长:</span>
+                                <span class="value">${v.duration_seconds != null ? Number(v.duration_seconds).toFixed(2) + " 秒" : "?"}${v.frames ? ` (${v.frames} 帧)` : ""}</span>
+                            </div>`);
+                    return rows.join("") || `<div class="minimax-modal-row"><span class="label">规格参数:</span><span class="value">—</span></div>`;
+                }
+                const durTxt = clip.duration_seconds != null ? Number(clip.duration_seconds).toFixed(2) + " 秒" : "";
+                return `<div class="minimax-modal-row"><span class="label">规格参数:</span><span class="value">${[clip.frames ? `${clip.frames} 帧` : "", durTxt, `${clip.fps || 24} fps`].filter(Boolean).join(" | ")}</span></div>`;
+            })()}
             <div class="minimax-modal-row">
                 <span class="label">生成时间:</span>
                 <span class="value">${clip.created_at || "未知"}</span>
@@ -212,7 +222,7 @@ function setupClipBinPickerWidget(node) {
 
         const selectBtn = document.createElement("button");
         selectBtn.className = "minimax-modal-select-btn";
-        selectBtn.innerHTML = `🎯 设为当前接力源 (Select Context)`;
+        selectBtn.innerHTML = `🎯 设为当前接续源 (Select Context)`;
         selectBtn.onclick = () => {
             if (selectionWidget) {
                 selectionWidget.value = clip.clip_id;
@@ -282,7 +292,7 @@ function setupClipBinPickerWidget(node) {
             autoCard.innerHTML = `
                 <div class="minimax-clip-thumb-wrap">
                     <div class="minimax-clip-thumb-placeholder">⚡</div>
-                    ${isAutoActive ? '<div class="minimax-clip-active-badge">当前接力源</div>' : ""}
+                    ${isAutoActive ? '<div class="minimax-clip-active-badge">当前接续源</div>' : ""}
                 </div>
                 <div class="minimax-clip-body">
                     <div class="minimax-clip-shot-name">✨ Auto / 自动最新</div>
@@ -402,7 +412,7 @@ function setupClipBinPickerWidget(node) {
                     if (isActive) {
                         const badge = document.createElement("div");
                         badge.className = "minimax-clip-active-badge";
-                        badge.innerText = "当前接力源";
+                        badge.innerText = "当前接续源";
                         thumbWrap.appendChild(badge);
                     }
                     card.appendChild(thumbWrap);
@@ -418,11 +428,34 @@ function setupClipBinPickerWidget(node) {
                     shotName.title = `${clip.shot_tag} (${clip.clip_id})`;
                     body.appendChild(shotName);
 
-                    // Metrics
+                    // Metrics (real durations: probed from the archived video when available)
                     const metrics = document.createElement("div");
                     metrics.className = "minimax-clip-metrics";
-                    metrics.innerHTML = `<span>${clip.frames || 124}帧</span><span>${clip.duration_seconds || 5.2}s</span>`;
+                    if (clip.variants) {
+                        const parts = [];
+                        for (const [label, v] of Object.entries(clip.variants)) {
+                            if (v && v.has_latent) {
+                                const durTxt = v.duration_seconds != null ? Number(v.duration_seconds).toFixed(2) + "s" : "?";
+                                parts.push(`<span>${label} ${durTxt}</span>`);
+                            }
+                        }
+                        metrics.innerHTML = parts.length ? parts.join("") : `<span>—</span>`;
+                    } else {
+                        const durTxt = clip.duration_seconds != null ? Number(clip.duration_seconds).toFixed(2) + "s" : "";
+                        metrics.innerHTML = [clip.frames ? `${clip.frames}帧` : "", durTxt].filter(Boolean).join(" ") || `<span>—</span>`;
+                    }
                     body.appendChild(metrics);
+
+                    // Variant badges (Dual Clip)
+                    if (clip.variants) {
+                        const variantBar = document.createElement("div");
+                        variantBar.className = "minimax-clip-variants";
+                        const hasA = clip.variants["一采"]?.has_latent;
+                        const hasB = clip.variants["二采"]?.has_latent;
+                        if (hasA) variantBar.innerHTML += `<span class="variant-badge variant-a">一采 ✓</span>`;
+                        if (hasB) variantBar.innerHTML += `<span class="variant-badge variant-b">二采 ✓</span>`;
+                        body.appendChild(variantBar);
+                    }
 
                     // Lineage / Parent
                     if (clip.parent_clip_id) {

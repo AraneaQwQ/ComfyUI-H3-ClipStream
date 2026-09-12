@@ -64,7 +64,7 @@ class MiniMaxClipBinSaverNode:
             "optional": {
                 "images": ("IMAGE", {"tooltip": "【渲染像素画面】连接当前片段解码后的画面 (来自 VAEDecode 或 Trim)。连接后系统将自动截取真实的首帧与尾帧，生成超高清并排缩略图卡片！"}),
                 "audio": ("AUDIO", {"tooltip": "【音频流】连接当前片段的音频 (来自 Trim 或 VAEDecodeAudio)。当自动编码保存 MP4 视频时，将作为音轨同步封装"}),
-                "prompt": ("STRING", {"default": "", "tooltip": "【本段正向提示词】连接输入文本 (Input Text/Prompt)。自动入库保存到 meta.json，以便后续回顾镜头剧情与接力参考"}),
+                "prompt": ("STRING", {"default": "", "tooltip": "【本段正向提示词】连接输入文本 (Input Text/Prompt)。自动入库保存到 meta.json，以便后续回顾镜头剧情与接续参考"}),
                 "parent_clip_id": ("STRING", {"default": "", "tooltip": "【父镜头血缘ID】连接上一段 Clip Bin Picker 输出的 clip_id。用于在元数据中清晰记录多版本分支历史与承接血缘"}),
                 "video_file_name": (any_type, {"default": "", "tooltip": "【关联合成视频名】连接当前片段合成保存节点 (VHS_VideoCombine) 的 Filenames 输出，或手动输入关联的 MP4 文件名，系统将自动将该视频归档到资产包中"}),
                 "save_video": ("BOOLEAN", {"default": True, "tooltip": "【归档完整视频】是否在资产包内归档或编码生成完整 MP4 视频文件。开启后 Clip Bin Picker 画廊将支持悬停实时微动播放与声画视听弹窗！"}),
@@ -158,8 +158,8 @@ class MiniMaxClipBinSaverNode:
             "type": "output"
         }]
 
-        logger.info("[Clip Bin Saver] Stored clip '%s' in '%s' (%s frames | ⭐%s | tag: %s | video: '%s')",
-                    meta_obj.clip_id, project_name, meta_obj.frames, meta_obj.rating, actual_shot, resolved_video_name)
+        logger.info("[Clip Bin Saver] Stored clip '%s' in '%s' (%s frames | tag: %s | video: '%s')",
+                    meta_obj.clip_id, project_name, meta_obj.frames, actual_shot, resolved_video_name)
 
         return {
             "ui": {"images": ui_images},
@@ -181,12 +181,12 @@ class MiniMaxClipBinPickerNode:
                     "tooltip": "【选择项目库】要读取素材的项目文件夹名称（如 Default_Project）。可在 ComfyUI 运行控制台查看已存在的项目名称列表"
                 }),
                 "mode": ([
-                    "Auto (首段全新 / 后续自动接力)",
+                    "Auto (首段全新 / 后续自动接续)",
                     "Force Initial (强制新建首段，无上下文)",
-                    "Strict Chaining (必须接力指定或最新镜头)"
+                    "Strict Chaining (必须接续指定或最新镜头)"
                 ], {
-                    "default": "Auto (首段全新 / 后续自动接力)",
-                    "tooltip": "【运行工作模式】\n• Auto（强烈推荐）：若项目库为空自动作为首段全新生成；后续运行时全自动接续上一段，无需任何拔线或手动操作！\n• Force Initial：强制开辟首段，忽略库内所有历史素材。\n• Strict Chaining：严格接力模式，库内无镜头时直接报错提示"
+                    "default": "Auto (首段全新 / 后续自动接续)",
+                    "tooltip": "【运行工作模式】\n• Auto（强烈推荐）：若项目库为空自动作为首段全新生成；后续运行时全自动接续上一段，无需任何拔线或手动操作！\n• Force Initial：强制开辟首段，忽略库内所有历史素材。\n• Strict Chaining：严格接续模式，库内无镜头时直接报错提示"
                 }),
                 "clip_selection": ("STRING", {
                     "default": "latest",
@@ -206,10 +206,18 @@ class MiniMaxClipBinPickerNode:
     FUNCTION = "pick_clip"
     CATEGORY = "MiniMaxH3/ClipStream"
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        # Force re-execution on every queued prompt: this node reads mutable disk state.
+        # Without it, ComfyUI's RAM-pressure cache serves the stale output of a previous
+        # run whenever the widget inputs are unchanged (e.g. Auto + 'latest'), which
+        # silently breaks continuation. float('nan') never equals itself -> new key each run.
+        return float("nan")
+
     def pick_clip(
         self,
         project_name: str = "Default_Project",
-        mode: str = "Auto (首段全新 / 后续自动接力)",
+        mode: str = "Auto (首段全新 / 后续自动接续)",
         clip_selection: str = "latest",
         custom_clip_path: str = "",
         **kwargs

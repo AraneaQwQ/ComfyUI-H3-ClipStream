@@ -3,7 +3,7 @@
 Provides:
 - Self-contained clip asset packaging (Latent, First/Tail keyframes, Preview composite, Metadata).
 - Project indexing with fast in-memory caching and thread-safe atomic writes.
-- Rich search, filtering (star ratings, tags, timestamps), and lineage tracking.
+- Lineage tracking (parent clip IDs) across multi-shot continuations.
 - Zero-VAE-cost image frame loading and placeholder generation.
 """
 
@@ -16,6 +16,9 @@ import shutil
 import subprocess
 import wave
 import tempfile
+import threading
+import inspect
+from functools import wraps
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
@@ -37,6 +40,43 @@ except ImportError:
 logger = logging.getLogger("minimax_clip_bin")
 
 
+_project_locks = {}
+_project_locks_guard = threading.Lock()
+
+
+def project_locked(fn):
+    """Serialize each project's read-modify-write operations within ComfyUI."""
+    signature = inspect.signature(fn)
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        key = os.path.normcase(os.path.realpath(get_project_dir(bound.arguments["project_name"])))
+        with _project_locks_guard:
+            lock = _project_locks.setdefault(key, threading.RLock())
+        with lock:
+            return fn(*args, **kwargs)
+    return wrapped
+
+
+def atomic_write_json(path, data):
+    """Publish a complete JSON file; preserve the old file on failure."""
+    fd, tmp = tempfile.mkstemp(prefix=".json_", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 @dataclass
 class ClipMeta:
     clip_id: str
@@ -44,9 +84,10 @@ class ClipMeta:
     shot_tag: str = "Shot 1"
     prompt: str = ""
     created_at: str = ""
-    rating: int = 3
     frames: int = 124
     duration_seconds: float = 5.16
+    # "computed" (latent steps / fps estimate) or "probed" (measured from the real video file)
+    duration_source: str = "computed"
     resolution: List[int] = field(default_factory=lambda: [1280, 720])
     fps: float = 24.0
     video_shape: List[int] = field(default_factory=lambda: [1, 16, 32, 88, 160])
@@ -58,14 +99,36 @@ class ClipMeta:
     notes: Optional[str] = None
 
 
+BIN_DIR_NAME = "h3-clipstream"
+LEGACY_BIN_DIR_NAME = "minimax_h3_bins"
+
+
 def get_base_bin_dir() -> str:
-    """Returns the base storage directory for all MiniMax Clip Bins."""
+    """Returns the base storage directory for all MiniMax Clip Bins.
+
+    One-time auto-migration: if a legacy 'minimax_h3_bins' folder exists and the
+    new one does not yet, it is renamed in place so existing projects keep working.
+    """
     try:
         import folder_paths
         base_dir = folder_paths.get_output_directory()
     except Exception:
         base_dir = "output"
-    bin_dir = os.path.join(base_dir, "minimax_h3_bins")
+    bin_dir = os.path.join(base_dir, BIN_DIR_NAME)
+    legacy_dir = os.path.join(base_dir, LEGACY_BIN_DIR_NAME)
+    if not os.path.isdir(bin_dir) and os.path.isdir(legacy_dir):
+        try:
+            os.replace(legacy_dir, bin_dir)
+            logger.info("[Clip Bin] Migrated legacy storage folder '%s' -> '%s'",
+                        LEGACY_BIN_DIR_NAME, BIN_DIR_NAME)
+        except Exception as e:
+            logger.warning("[Clip Bin] Could not auto-migrate '%s' to '%s': %s "
+                           "(move the folder manually if your projects seem missing)",
+                           legacy_dir, bin_dir, e)
+    elif os.path.isdir(bin_dir) and os.path.isdir(legacy_dir):
+        logger.warning("[Clip Bin] Both '%s' and legacy '%s' exist; using '%s'. "
+                       "Merge the legacy folder manually if needed.",
+                       BIN_DIR_NAME, LEGACY_BIN_DIR_NAME, BIN_DIR_NAME)
     os.makedirs(bin_dir, exist_ok=True)
     return bin_dir
 
@@ -99,6 +162,7 @@ def _get_index_path(project_name: str) -> str:
     return os.path.join(get_project_dir(project_name), ".bin_index.json")
 
 
+@project_locked
 def load_project_index(project_name: str) -> Dict[str, Any]:
     """Loads the project index, auto-rebuilding if missing or corrupted."""
     idx_path = _get_index_path(project_name)
@@ -115,31 +179,17 @@ def load_project_index(project_name: str) -> Dict[str, Any]:
     return rebuild_project_index(project_name)
 
 
+@project_locked
 def save_project_index(project_name: str, index_data: Dict[str, Any]) -> None:
-    """Saves project index atomically to prevent corruption."""
+    """Saves project index atomically; the previous file is preserved on failure."""
     idx_path = _get_index_path(project_name)
-    tmp_path = idx_path + f".tmp_{os.getpid()}_{int(time.time())}"
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(index_data, f, indent=2, ensure_ascii=False)
-        if os.path.exists(idx_path):
-            try:
-                os.replace(tmp_path, idx_path)
-            except OSError:
-                # Windows fallback
-                os.remove(idx_path)
-                os.rename(tmp_path, idx_path)
-        else:
-            os.rename(tmp_path, idx_path)
+        atomic_write_json(idx_path, index_data)
     except Exception as e:
         logger.error("[Clip Bin] Failed to save index for '%s': %s", project_name, e)
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
 
 
+@project_locked
 def rebuild_project_index(project_name: str) -> Dict[str, Any]:
     """Scans all subdirectories in a project directory and builds an updated index."""
     p_dir = get_project_dir(project_name)
@@ -212,6 +262,18 @@ def rebuild_project_index(project_name: str) -> Dict[str, Any]:
     }
     save_project_index(project_name, index_data)
     return index_data
+
+
+@project_locked
+def upsert_clip_into_index(project_name: str, meta_dict: Dict[str, Any]) -> None:
+    """Atomically inserts (or refreshes) a clip entry at the front of the project index."""
+    idx = load_project_index(project_name)
+    clips = [c for c in idx.get("clips", []) if c.get("clip_id") != meta_dict.get("clip_id")]
+    clips.insert(0, meta_dict)
+    idx["clips"] = clips
+    idx["total_clips"] = len(clips)
+    idx["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    save_project_index(project_name, idx)
 
 
 def tensor_to_pil(tensor_img: torch.Tensor) -> Image.Image:
@@ -356,6 +418,57 @@ def resolve_source_video_path(val: Any) -> Optional[str]:
     return None
 
 
+_ffprobe_bin_cache: Optional[str] = None
+
+
+def _find_ffprobe() -> Optional[str]:
+    """Locates the ffprobe executable (PATH first, then next to ffmpeg)."""
+    global _ffprobe_bin_cache
+    if _ffprobe_bin_cache is not None:
+        return _ffprobe_bin_cache or None
+    cand = shutil.which("ffprobe")
+    if not cand:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if ffmpeg_bin:
+            name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+            maybe = os.path.join(os.path.dirname(ffmpeg_bin), name)
+            if os.path.isfile(maybe):
+                cand = maybe
+    _ffprobe_bin_cache = cand or ""
+    return cand or None
+
+
+def probe_video_duration(video_path: str) -> Optional[float]:
+    """Measures a media file's actual duration in seconds via ffprobe.
+
+    This is the ground truth for card display: the archived MP4 may differ from
+    the latent-derived estimate (different encoder fps, audio-truncated length,
+    ...). Returns None when ffprobe is unavailable or the probe fails, so callers
+    keep their computed fallback.
+    """
+    if not video_path or not os.path.isfile(video_path):
+        return None
+    ffprobe_bin = _find_ffprobe()
+    if not ffprobe_bin:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffprobe_bin, "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             video_path],
+            capture_output=True, text=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            return None
+        val = (proc.stdout or "").strip()
+        duration = float(val)
+        return duration if duration > 0 else None
+    except Exception as e:
+        logger.debug("[Clip Bin] ffprobe duration probe failed for '%s': %s", video_path, e)
+        return None
+
+
 def encode_images_to_mp4(
     images: torch.Tensor,
     output_mp4_path: str,
@@ -452,6 +565,7 @@ def encode_images_to_mp4(
                 pass
 
 
+@project_locked
 def save_clip_asset(
     video_tensor: torch.Tensor,
     audio_tensor: Optional[torch.Tensor],
@@ -459,7 +573,6 @@ def save_clip_asset(
     project_name: str = "Default_Project",
     shot_tag: str = "Shot 1",
     prompt: str = "",
-    rating: int = 3,
     parent_clip_id: Optional[str] = None,
     associated_video_path: Optional[str] = None,
     raw_video_source: Any = None,
@@ -504,7 +617,6 @@ def save_clip_asset(
         shot_tag=shot_tag,
         prompt=prompt,
         created_at=time_display,
-        rating=max(1, min(5, int(rating))),
         frames=frame_count,
         duration_seconds=duration,
         resolution=[video_cpu.shape[4] * 8, video_cpu.shape[3] * 8],  # Approximate pixel WxH
@@ -589,25 +701,27 @@ def save_clip_asset(
     meta_obj.has_video = video_saved
     meta_obj.video_file = saved_video_filename
 
+    # 3b. Measure the archived video's real duration (ground truth for card display)
+    if video_saved and saved_video_filename:
+        probed = probe_video_duration(os.path.join(clip_dir, saved_video_filename))
+        if probed is not None:
+            meta_obj.duration_seconds = round(probed, 2)
+            meta_obj.duration_source = "probed"
+
     # 4. Save meta.json
     meta_json_path = os.path.join(clip_dir, "meta.json")
     with open(meta_json_path, "w", encoding="utf-8") as f:
         json.dump(asdict(meta_obj), f, indent=2, ensure_ascii=False)
 
-    # 4. Update project index
-    idx = load_project_index(project_name)
-    existing_clips = [c for c in idx.get("clips", []) if c.get("clip_id") != clip_id]
-    existing_clips.insert(0, asdict(meta_obj))
-    idx["clips"] = existing_clips
-    idx["total_clips"] = len(existing_clips)
-    idx["last_updated"] = time_display
-    save_project_index(project_name, idx)
+    # 4. Update project index (atomic under the per-project lock)
+    upsert_clip_into_index(project_name, asdict(meta_obj))
 
-    logger.info("[Clip Bin] Successfully stored asset '%s' in project '%s' (⭐%s, %s frames)",
-                clip_id, project_name, meta_obj.rating, frame_count)
+    logger.info("[Clip Bin] Successfully stored asset '%s' in project '%s' (%s frames)",
+                clip_id, project_name, frame_count)
     return meta_obj, clip_dir, preview_pil
 
 
+@project_locked
 def load_clip_asset(project_name: str, clip_id: str) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]]:
     """Loads a clip asset completely from disk.
     
@@ -671,23 +785,3 @@ def load_clip_asset(project_name: str, clip_id: str) -> Tuple[torch.Tensor, Opti
     return video, audio, tail_tensor, first_tensor, meta_dict
 
 
-def format_clip_label(meta: Dict[str, Any]) -> str:
-    """Creates a rich, user-friendly label for ComfyUI combo dropdowns."""
-    stars = "⭐" * meta.get("rating", 3)
-    created = meta.get("created_at", "")[:16]  # "YYYY-MM-DD HH:MM"
-    shot = meta.get("shot_tag", "Shot")
-    frames = meta.get("frames", 124)
-    duration = meta.get("duration_seconds", 5.2)
-    clip_id = meta.get("clip_id", "")
-    return f"[{stars}] {created} | {shot} ({frames}f, {duration}s) #{clip_id}"
-
-
-def get_clips_for_selection(project_name: str, min_rating: int = 1) -> List[Tuple[str, str]]:
-    """Returns a list of (display_label, clip_id) tuples matching criteria."""
-    idx = load_project_index(project_name)
-    clips = idx.get("clips", [])
-    results = []
-    for c in clips:
-        if c.get("rating", 3) >= min_rating:
-            results.append((format_clip_label(c), c.get("clip_id", "")))
-    return results
