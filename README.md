@@ -11,9 +11,10 @@
 | Component | Source | Role |
 |-----------|--------|------|
 | **Clip Bin** (Saver + Picker) | [knoic/ComfyUI-MiniMaxH3-PrefixStream](https://github.com/knoic/ComfyUI-MiniMaxH3-PrefixStream) | Visual gallery — archive & retrieve any past shot as a full AV latent |
+| **Clip Bin Dual** (Dual Saver + Dual Picker) | Original to this project | One card holds **both** 一采 + 二采 latents — one click gives you both |
 | **Motion-Context** (continuation engine) | [NikoDemon80/ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) | Frame-anchored chaining — audio & video both carry over |
 
-We **kept** PrefixStream's visual Clip Bin but **removed** its continuation engine entirely. Continuation is handled 100% by Motion-Context.
+We **kept** PrefixStream's visual Clip Bin but **removed** its continuation engine entirely. Continuation is handled 100% by Motion-Context. The Dual pair is our own addition for shots produced by two sampler passes (一采 + 二采).
 
 **The key wiring:** `Picker.latent` → `Motion Context.context_latent` — that's it. No decode/re-encode round-trip, no audio "restarting from scratch".
 
@@ -52,6 +53,16 @@ So `Picker.latent` plugs directly into `context_latent` with zero adapters.
     → Clip Bin Saver  (re-archive for the next continuation)
 ```
 
+**Dual path (one shot = two sampler passes):**
+
+```
+一采: H3 workflow → Sampler → Decode ─┐
+二采: H3 workflow → Sampler → Decode ─┼→ Dual Clip Saver   (one card: latent_一采 + latent_二采)
+
+Dual Clip Picker ──► latent_一采 ─► Motion Context (一采 path) . context_latent
+                 └► latent_二采 ─► Motion Context (二采 path) . context_latent
+```
+
 ---
 
 ### Installation
@@ -68,14 +79,22 @@ Restart ComfyUI, hard-refresh the browser (`Ctrl+F5`).
 
 ---
 
-### Nodes (8 total)
+### Storage
+
+Clips live in `ComfyUI/output/h3-clipstream/<project_name>/`. If you have an older install with `output/minimax_h3_bins`, it is **auto-migrated** (renamed) on first run. A ready-to-load example workflow is in `examples/`.
+
+---
+
+### Nodes (10 total)
 
 #### Clip Bin (`MiniMaxH3/ClipStream`)
 
 | Node | What it does |
 |------|-------------|
-| **Clip Bin Saver** | Archives an H3 AV latent + preview card + shot tag + lineage into a project folder |
-| **Clip Bin Picker** | Visual card gallery. 3 modes: **Auto** / **Force Initial** / **Strict Chaining**. Outputs `latent`, `tail_frame`, `first_frame`, `prompt`, `clip_id` |
+| **Clip Bin Saver** | Archives an H3 AV latent + preview card + shot tag + lineage into a project folder (real video duration is probed with ffprobe and shown on the card) |
+| **Clip Bin Picker** | Visual card gallery. 3 modes: **Auto** / **Force Initial** / **Strict Chaining**. Outputs `latent`, `tail_frame`, `first_frame`, `prompt`, `clip_id`, `project_name` |
+| **Dual Clip Saver** (一采+二采) | Archives the latents of both sampler passes (一采 required, 二采 optional) into **one card**, badged 「仅一采」 / 「含一采+二采」 |
+| **Dual Clip Picker** (一采+二采) | Same 3 modes as the Picker. One card click outputs **both** `latent_一采` and `latent_二采` (a pass that didn't run outputs `None`), plus `first_frame` / `tail_frame` / `prompt` / `clip_id` / `project_name` |
 
 #### Motion-Context (`conditioning/minimax`)
 
@@ -99,6 +118,8 @@ Restart ComfyUI, hard-refresh the browser (`Ctrl+F5`).
 
 > When the Picker outputs `None` (first-clip), Motion Context detects the empty context and **passes conditioning through unchanged** (`trim_frames = 0`). Trim also passes through. The entire chain degrades gracefully into a normal first-clip workflow.
 
+> The Dual Picker shares the same three modes; in first-clip mode **both** latents output `None`.
+
 ---
 
 ### Key parameters
@@ -119,6 +140,7 @@ Restart ComfyUI, hard-refresh the browser (`Ctrl+F5`).
 | Picker: "No clips found" | No clips in that `project_name`. Use **Auto** mode or check the Saver's project name matches. |
 | Audio seam jump / "sounds similar but isn't the same" | Insert a **Seam Probe** between Decode and Trim. Read the `report` output for `lag_ms`, `corr`, level step. |
 | Resolution mismatch rejection | Ensure `context_latent` and target clip are the same resolution. |
+| Dual Picker: 二采 latent is empty | That card was archived with only 一采 (二采 pass never ran). Expected — the 一采 path still works. |
 
 ---
 
@@ -142,6 +164,10 @@ ComfyUI-H3-ClipStream/
 ├── ATTRIBUTION.md
 ├── requirements.txt
 ├── README.md
+├── examples/
+│   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # Ready-to-load example workflow
+├── scripts/
+│   └── sync_upstream.sh     # Helper: track upstream Motion-Context updates
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context frontend
 │   ├── clip_bin_picker.js         # Clip Bin gallery frontend (card wrap layout)
@@ -155,6 +181,8 @@ ComfyUI-H3-ClipStream/
 └── clipbin/
     ├── __init__.py
     ├── nodes.py                   # Saver + Picker (3 modes)
+    ├── dual_nodes.py              # Dual Saver + Dual Picker (一采+二采)
+    ├── dual_manager.py            # Dual-variant archive & load
     ├── _shared.py
     ├── clip_bin_manager.py
     └── clip_bin_api.py
@@ -170,9 +198,10 @@ ComfyUI-H3-ClipStream/
 | 组件 | 来源 | 作用 |
 |------|------|------|
 | **Clip Bin**（Saver + Picker） | [knoic/ComfyUI-MiniMaxH3-PrefixStream](https://github.com/knoic/ComfyUI-MiniMaxH3-PrefixStream) | 可视化画廊——归档 & 取回任意历史镜头的完整音画 latent |
+| **Clip Bin Dual**（Dual Saver + Dual Picker） | 本项目原创 | 一张卡片同时保存 **一采 + 二采** 两个 latent——点一次，两个都拿到 |
 | **Motion-Context**（接续引擎） | [NikoDemon80/ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) | 关键帧锚定链式接续——音画都带着走 |
 
-我们**保留**了 PrefixStream 的可视化 Clip Bin，但**完全移除**了它自带的接续引擎。接续 100% 由 Motion-Context 负责。
+我们**保留**了 PrefixStream 的可视化 Clip Bin，但**完全移除**了它自带的接续引擎。接续 100% 由 Motion-Context 负责。Dual Saver/Picker 是我们为「一个镜头经两次采样器生成（一采 + 二采）」新增的原创节点。
 
 **核心接线：** `Picker.latent` → `Motion Context.context_latent`——就这一根线。不做解码/重编码往返，不让音频"听起来像"地重新起步。
 
@@ -211,6 +240,16 @@ MiniMax H3 是**音视频一体**模型——视频和音频活在同一个 `Nes
     → Clip Bin Saver  （再归档，形成下一段可接续的素材）
 ```
 
+**双路（一个镜头 = 两次采样器）：**
+
+```
+一采: H3 工作流 → 采样器 → 解码 ─┐
+二采: H3 工作流 → 采样器 → 解码 ─┼→ Dual Clip Saver   （一张卡片：latent_一采 + latent_二采）
+
+Dual Clip Picker ──► latent_一采 ─► Motion Context（一采路）. context_latent
+                 └► latent_二采 ─► Motion Context（二采路）. context_latent
+```
+
 ---
 
 ### 安装
@@ -227,14 +266,22 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 
 ---
 
-### 节点清单（共 8 个）
+### 存储位置
+
+素材存放在 `ComfyUI/output/h3-clipstream/<项目名>/`。若旧版本存在 `output/minimax_h3_bins`，首次运行会**自动迁移**（改名）。现成可载入的示例工作流见 `examples/` 目录。
+
+---
+
+### 节点清单（共 10 个）
 
 #### Clip Bin（类别 `MiniMaxH3/ClipStream`）
 
 | 节点 | 作用 |
 |------|------|
-| **Clip Bin Saver** | 把一段 H3 音画 latent + 预览卡 + 镜头标签 + 血缘归档进项目素材库 |
-| **Clip Bin Picker** | 可视化卡片画廊。三种模式：**Auto** / **Force Initial** / **Strict Chaining**。输出 `latent`、`tail_frame`、`first_frame`、`prompt`、`clip_id` |
+| **Clip Bin Saver** | 把一段 H3 音画 latent + 预览卡 + 镜头标签 + 血缘归档进项目素材库（卡片时长按 ffprobe 实测显示） |
+| **Clip Bin Picker** | 可视化卡片画廊。三种模式：**Auto** / **Force Initial** / **Strict Chaining**。输出 `latent`、`tail_frame`、`first_frame`、`prompt`、`clip_id`、`project_name` |
+| **Dual Clip Saver** (一采+二采) | 把两条采样器路的 latent（一采必填、二采可选）归档进**同一张卡片**，卡片标注「仅一采」/「含一采+二采」 |
+| **Dual Clip Picker** (一采+二采) | 与 Picker 相同的三种模式。点一次卡片同时输出 `latent_一采` 与 `latent_二采`（没跑的那条路输出 `None`），另输出 `first_frame`/`tail_frame`/`prompt`/`clip_id`/`project_name` |
 
 #### Motion-Context（类别 `conditioning/minimax`）
 
@@ -258,6 +305,8 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 
 > **首段时 Picker 输出 `None`**：Motion Context 检测到空上下文后**原样透传 conditioning**（`trim_frames = 0`），Trim 也随之透传。整条链自然退化为普通首段工作流，无需拔线。
 
+> Dual Picker 同样支持三种模式；首段时**两个** latent 均输出 `None`。
+
 ---
 
 ### 关键参数
@@ -278,6 +327,7 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 | Picker 报"No clips found" | 该 `project_name` 库里没有镜头。用 **Auto** 模式或确认 Saver 项目名一致。 |
 | 音频接缝跳变 / "像但不是同一条" | 在 Decode 和 Trim 之间插 **Seam Probe**，读 `report` 输出的 `lag_ms`、`corr`、电平 step。 |
 | 分辨率不匹配被拒绝 | 确保 `context_latent` 与目标片段同分辨率。 |
+| Dual Picker 的 二采 latent 为空 | 该卡片归档时只有一采（二采路没跑过），属正常现象；一采路照常可用。 |
 
 ---
 
@@ -301,6 +351,10 @@ ComfyUI-H3-ClipStream/
 ├── ATTRIBUTION.md
 ├── requirements.txt
 ├── README.md
+├── examples/
+│   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # 现成示例工作流
+├── scripts/
+│   └── sync_upstream.sh     # 辅助脚本：跟踪上游 Motion-Context 更新
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context 前端
 │   ├── clip_bin_picker.js         # Clip Bin 画廊前端（卡片换行布局）
@@ -314,6 +368,8 @@ ComfyUI-H3-ClipStream/
 └── clipbin/
     ├── __init__.py
     ├── nodes.py                   # Saver + Picker（3 模式）
+    ├── dual_nodes.py              # Dual Saver + Dual Picker（一采+二采）
+    ├── dual_manager.py            # 双变体归档与读取
     ├── _shared.py
     ├── clip_bin_manager.py
     └── clip_bin_api.py

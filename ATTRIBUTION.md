@@ -27,6 +27,10 @@ nodes and their `cache_manager` / `native_masked_av` / `fused_attention` /
 `rope_aligner` dependencies are intentionally *not* included). Continuation is
 provided by Motion-Context instead.
 
+The Dual Saver/Picker pair (`clipbin/dual_nodes.py`, `clipbin/dual_manager.py`)
+is **original work of the ClipStream author** (AraneaQwQ), not taken from
+either upstream.
+
 ---
 
 MIT code may be incorporated into a GPLv3 work, so the whole plugin is
