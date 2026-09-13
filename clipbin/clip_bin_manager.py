@@ -492,7 +492,10 @@ def encode_images_to_mp4(
         images = images[:, :H, :W, :]
 
     try:
-        raw_bytes = bytes(images.detach().clamp(0, 1).mul(255).to(torch.uint8).contiguous().cpu().untyped_storage())
+        # Use .numpy().tobytes(), NOT bytes(...untyped_storage()):
+        # on torch >= 2.12, bytes(storage) falls back to per-byte Python __getitem__
+        # (~2.5 us/byte -> multi-minute stalls on large clips; numpy path is ~0.06s for 362MB).
+        raw_bytes = images.detach().clamp(0, 1).mul(255).to(torch.uint8).contiguous().cpu().numpy().tobytes()
     except Exception as e:
         logger.warning("[Clip Bin] Failed to extract raw image bytes for video encoding: %s", e)
         return False
@@ -517,7 +520,7 @@ def encode_images_to_mp4(
                     wf = wf[0]
                 channels = wf.shape[0]
                 wf_pcm = wf.clamp(-1, 1).mul(32767).to(torch.int16).t().contiguous().cpu()
-                audio_bytes = bytes(wf_pcm.untyped_storage())
+                audio_bytes = wf_pcm.numpy().tobytes()  # fast C-level copy; bytes(storage) is a per-byte Python loop on torch>=2.12
 
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_f:
                     temp_wav_path = tmp_f.name
