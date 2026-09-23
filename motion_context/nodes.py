@@ -368,6 +368,10 @@ class MiniMaxH3MotionContext:
                                "matching the pinned frames is encoded and "
                                "pinned alongside them. Ignored when "
                                "context_latent is wired."}),
+                "enable_audio_context": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "When False, ignore audio even if context_latent is wired. "
+                               "Only video motion context will be used. Default True preserves original behavior."}),
             },
         }
 
@@ -386,7 +390,8 @@ class MiniMaxH3MotionContext:
 
     def apply(self, conditioning, vae, latent, context_length,
               audio_context_length=24, context_frames=None,
-              context_latent=None, audio_vae=None, context_audio=None):
+              context_latent=None, audio_vae=None, context_audio=None,
+              enable_audio_context=True):
         if context_latent is None and context_frames is None:
             return (conditioning, 0)
         encode_mode, anchor_mode = ENCODE_MODE, ANCHOR_MODE
@@ -535,7 +540,7 @@ class MiniMaxH3MotionContext:
         audio_end_frame = None
         a_frames = 0
         audio_src = "off"
-        if context_latent is not None or context_audio is not None:
+        if enable_audio_context and (context_latent is not None or context_audio is not None):
             # the audio window is independent of the video one: audio cond
             # rows cost rows but never cost delivered frames
             a_frames = int(audio_context_length) or span
