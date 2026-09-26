@@ -31,10 +31,17 @@ app.registerExtension({
             return;
         }
 
+        // Prevent node from shrinking below one card's display size
+        nodeType.prototype.min_size = [320, 200];
+
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
             this.imgs = null;
+            // Force minimum size so cards are always visible
+            if (this.size[0] < 320 || this.size[1] < 200) {
+                this.setSize([Math.max(this.size[0], 320), Math.max(this.size[1], 200)]);
+            }
             setupClipBinPickerWidget(this);
             return r;
         };
@@ -85,9 +92,50 @@ function setupClipBinPickerWidget(node) {
     refreshBtn.innerText = "🔄 刷新";
     actionsWrap.appendChild(refreshBtn);
 
+    // Zoom controls
+    const zoomLabel = document.createElement("span");
+    zoomLabel.className = "minimax-clip-bin-zoom-label";
+    zoomLabel.textContent = "100%";
+    const btnZoomIn = document.createElement("button");
+    btnZoomIn.className = "minimax-clip-bin-refresh-btn";
+    btnZoomIn.textContent = "+";
+    btnZoomIn.title = "放大卡片";
+    const btnZoomOut = document.createElement("button");
+    btnZoomOut.className = "minimax-clip-bin-refresh-btn";
+    btnZoomOut.textContent = "−";
+    btnZoomOut.title = "缩小卡片";
+    actionsWrap.appendChild(btnZoomOut);
+    actionsWrap.appendChild(zoomLabel);
+    actionsWrap.appendChild(btnZoomIn);
+
     header.appendChild(titleWrap);
     header.appendChild(actionsWrap);
     container.appendChild(header);
+
+    // --- Card Zoom State ---
+    const ZOOM_STEPS = [1, 1.5, 2, 3, 4]; // 100%, 150%, 200%, 300%, 400%
+    let zoomIdx = 0;
+    const BASE_CARD_MIN = 150; // px
+    const BASE_THUMB_H = 85;   // px
+
+    function applyCardZoom() {
+        const z = ZOOM_STEPS[zoomIdx];
+        const cardMin = Math.round(BASE_CARD_MIN * z);
+        const thumbH = Math.round(BASE_THUMB_H * z);
+        container.style.setProperty("--card-min", cardMin + "px");
+        container.style.setProperty("--thumb-h", thumbH + "px");
+        zoomLabel.textContent = Math.round(z * 100) + "%";
+        requestAnimationFrame(fitToContent);
+    }
+
+    btnZoomIn.onclick = (e) => {
+        e.stopPropagation();
+        if (zoomIdx < ZOOM_STEPS.length - 1) { zoomIdx++; applyCardZoom(); }
+    };
+    btnZoomOut.onclick = (e) => {
+        e.stopPropagation();
+        if (zoomIdx > 0) { zoomIdx--; applyCardZoom(); }
+    };
 
     // Deck carousel
     const deck = document.createElement("div");
@@ -118,24 +166,24 @@ function setupClipBinPickerWidget(node) {
     // Ensure a sensible minimum width for the deck layout
     if (node.size[0] < 520) node.setSize([520, node.size[1]]);
 
-    // Fit node height to match content
-    // Uses deck.scrollHeight (content height — immune to node-size feedback loop)
-    const DECK_MAX = 340; // .minimax-clip-bin-deck max-height
-
+    // Fit node height: shrink so bottom edge flush with container bottom
     function fitToContent() {
-        const deckH = Math.min(deck.scrollHeight || 0, DECK_MAX);
-        if (deckH === 0) return; // no cards rendered yet
+        const containerH = container.offsetHeight || 0;
+        if (containerH === 0) return; // no cards rendered yet
 
-        // Standard widgets (project_name, mode, clip_selection, custom_clip_path)
-        const stdW = (node.widgets || []).filter(w => w.type !== "custom");
-        const stdH = stdW.length * 28; // ~28px each incl. ComfyUI spacing
+        // Standard widgets (exclude our DOM container widget)
+        const stdWidgetsH = (node.widgets || []).filter(w => w.type !== "custom").length * 28;
+        const inputsH = (node.inputs || []).length * 20;
+        const outputsH = (node.outputs || []).length * 20;
+        const TITLE = 28;
+        const BOTTOM_PAD = 6;
 
-        // Chrome: container padding(16) + border(2) + margins(8) + header(~30) + footer(~28)
-        //        + ComfyUI node internal padding + widget gaps ≈ 160px
-        const CHROME = 160;
+        const target = TITLE + inputsH + outputsH + stdWidgetsH + containerH + BOTTOM_PAD;
 
-        const target = Math.max(stdH + deckH + CHROME, 180);
-        if (Math.abs(node.size[1] - target) > 3) node.setSize([node.size[0], target]);
+        // Only shrink (never grow) — user may intentionally make node bigger
+        if (node.size[1] > target + 4) {
+            node.setSize([node.size[0], target]);
+        }
     }
 
     // Function to open full-featured audio/video modal preview
