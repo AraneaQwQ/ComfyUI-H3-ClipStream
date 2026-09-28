@@ -23,6 +23,8 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
+from .asset_paths import checked_asset_dir
+
 import torch
 try:
     import numpy as np
@@ -187,6 +189,7 @@ def save_project_index(project_name: str, index_data: Dict[str, Any]) -> None:
         atomic_write_json(idx_path, index_data)
     except Exception as e:
         logger.error("[Clip Bin] Failed to save index for '%s': %s", project_name, e)
+        raise
 
 
 @project_locked
@@ -274,6 +277,38 @@ def upsert_clip_into_index(project_name: str, meta_dict: Dict[str, Any]) -> None
     idx["total_clips"] = len(clips)
     idx["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_project_index(project_name, idx)
+
+
+@project_locked
+def delete_clip_asset(project_name: str, clip_id: str) -> bool:
+    """Remove exactly one archived clip (including both variants for dual clips).
+
+    Steps:
+      1. Validate path safety (checked_asset_dir).
+      2. Confirm the clip exists in the project index.
+      3. Save updated index (without this clip).
+      4. Delete the clip directory on disk.
+      5. On disk-delete failure, restore the previous index.
+
+    Returns True on success, False if the clip was not found.
+    Raises OSError if the directory cannot be deleted (e.g. file lock).
+    """
+    directory = checked_asset_dir(get_base_bin_dir(), get_project_dir(project_name), clip_id)
+    idx = load_project_index(project_name)
+    if not any(c.get("clip_id") == clip_id for c in idx.get("clips", [])):
+        return False
+    previous = dict(idx)
+    idx["clips"] = [c for c in idx.get("clips", []) if c.get("clip_id") != clip_id]
+    idx["total_clips"] = len(idx["clips"])
+    idx["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    save_project_index(project_name, idx)
+    try:
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+    except OSError:
+        save_project_index(project_name, previous)
+        raise
+    return True
 
 
 def tensor_to_pil(tensor_img: torch.Tensor) -> Image.Image:

@@ -50,6 +50,7 @@ from ._shared import (
 )
 from .clip_bin_manager import (
     get_project_dir,
+    project_locked,
     load_project_index,
     upsert_clip_into_index,
     tensor_to_pil,
@@ -105,6 +106,7 @@ def _variant_slug(variant: str) -> str:
     return variant  # "一采" or "二采"
 
 
+@project_locked
 def save_dual_clip_asset(
     latent_a: Optional[Dict[str, Any]],
     latent_b: Optional[Dict[str, Any]],
@@ -286,6 +288,7 @@ def save_dual_clip_asset(
     return meta_obj, clip_dir, preview_pil
 
 
+@project_locked
 def load_dual_clip_asset(project_name: str, clip_id: str) -> Dict[str, Any]:
     """Loads a dual-variant clip asset from disk.
     

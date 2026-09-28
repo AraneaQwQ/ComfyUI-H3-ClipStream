@@ -600,3 +600,15 @@
     border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
+/* Card delete button (bottom-right corner) */
+.minimax-clip-body { position: relative; padding-right: 38px; min-height: 42px; }
+.minimax-clip-body > .h3-asset-delete {
+    position: absolute; right: 5px; bottom: 5px; width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center; padding: 4px;
+    color: #cbd5e1; background: #20252d; border: 1px solid #475569;
+    border-radius: 5px; cursor: pointer;
+}
+.minimax-clip-body > .h3-asset-delete:hover { color: #fca5a5; border-color: #ef4444; background: #451a1a; }
+.minimax-clip-body > .h3-asset-delete:focus-visible { outline: 2px solid #f87171; outline-offset: 2px; }
+.minimax-clip-body > .h3-asset-delete:disabled { opacity: .45; cursor: wait; }
+

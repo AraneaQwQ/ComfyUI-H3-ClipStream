@@ -514,6 +514,42 @@ function setupClipBinPickerWidget(node) {
                         body.appendChild(lineage);
                     }
 
+                    // Delete button (bottom-right of card body)
+                    const delBtn = document.createElement("button");
+                    delBtn.type = "button";
+                    delBtn.className = "h3-asset-delete";
+                    delBtn.title = `删除 ${clip.shot_tag || clip.clip_id}`;
+                    delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+                    delBtn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        const desc = `项目「${currentProject}」的 ${clip.shot_tag || clip.clip_id}${clip.variants ? "（含一采、二采）" : ""}`;
+                        if (!window.confirm(`永久删除 ${desc}？\n将删除该卡片对应的素材文件、预览和索引；此操作无法撤销。`)) return;
+                        delBtn.disabled = true;
+                        try {
+                            const response = await api.fetchApi("/minimax/clip_bin/delete", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ project: currentProject, clip_id: clip.clip_id }),
+                            });
+                            if (!response.ok) {
+                                const error = await response.json().catch(() => ({}));
+                                window.alert(error.error || `删除失败 (${response.status})`);
+                            } else {
+                                // If the deleted clip was selected, fall back to Auto
+                                if (selectionWidget && selectionWidget.value === clip.clip_id) {
+                                    selectionWidget.value = "latest";
+                                    selectionWidget.callback?.("latest");
+                                }
+                                await loadClips();
+                            }
+                        } catch (err) {
+                            window.alert(`删除失败: ${err.message || err}`);
+                        } finally {
+                            delBtn.disabled = false;
+                        }
+                    });
+                    body.appendChild(delBtn);
+
                     card.appendChild(body);
 
                     // Click to select
@@ -569,6 +605,14 @@ function setupClipBinPickerWidget(node) {
 
     // Initial load
     setTimeout(loadClips, 200);
+
+    // Multi-panel deletion notification
+    const onDeleted = (e) => {
+        if (e.detail?.project === (projectWidget?.value || "Default_Project")) {
+            loadClips(e.detail.deleted_id);
+        }
+    };
+    api.addEventListener("minimax/clip_bin/changed", onDeleted);
 
     // Auto-refresh when generation execution finishes
     api.addEventListener("executed", (e) => {
