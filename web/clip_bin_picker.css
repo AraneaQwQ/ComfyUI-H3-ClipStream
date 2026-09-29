@@ -600,7 +600,16 @@
     border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
-/* Card delete button (bottom-right corner) */
+
+/* RAFOLIE 2026-09-28: responsive DOM layout, scoped to this plugin. */
+.minimax-clip-bin-container { margin: 0; min-width: 0; min-height: 0; }
+.minimax-clip-bin-header { flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
+.minimax-clip-bin-deck { flex: 1 1 0; min-height: 0; min-width: 0;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min, 150px)), 1fr)); }
+.minimax-clip-bin-footer { flex: 0 0 auto; flex-wrap: wrap; overflow-wrap: anywhere; }
+.minimax-clip-bin-container img { max-width: 100%; }
+
+/* RAFOLIE: permanent-delete action stays in the card's lower-right corner. */
 .minimax-clip-body { position: relative; padding-right: 38px; min-height: 42px; }
 .minimax-clip-body > .h3-asset-delete {
     position: absolute; right: 5px; bottom: 5px; width: 28px; height: 28px;
@@ -611,4 +620,3 @@
 .minimax-clip-body > .h3-asset-delete:hover { color: #fca5a5; border-color: #ef4444; background: #451a1a; }
 .minimax-clip-body > .h3-asset-delete:focus-visible { outline: 2px solid #f87171; outline-offset: 2px; }
 .minimax-clip-body > .h3-asset-delete:disabled { opacity: .45; cursor: wait; }
-

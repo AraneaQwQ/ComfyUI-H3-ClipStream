@@ -1,5 +1,8 @@
 # ComfyUI H3 ClipStream
 
+**Current: ComfyUI V3 API + Nodes 2.0.** Requires ComfyUI ≥ 0.37.0. See [V3_MIGRATION.md](V3_MIGRATION.md) for details.
+Card deletion supported on both single & dual pickers. See [CACHE_AND_DELETION.md](CACHE_AND_DELETION.md).
+
 **[English](#english)** | **[简体中文](#简体中文)**
 
 ---

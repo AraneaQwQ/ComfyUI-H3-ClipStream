@@ -1,3 +1,6 @@
+// Modified by RAFOLIE 2026-09-28: Nodes 2.0 DOM layout and lifecycle.
+import { addDeleteButton } from "./delete_button.js";
+import { addPanel } from "./dom_panel.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
@@ -43,6 +46,11 @@ app.registerExtension({
                 this.setSize([Math.max(this.size[0], 320), Math.max(this.size[1], 200)]);
             }
             setupClipBinPickerWidget(this);
+            if (nodeData.name === "MiniMaxClipBinDualPicker") {
+                // Leave room for seven outputs, controls and the card gallery.
+                // Only creation sets this default; saved workflow sizes win later.
+                this.setSize([Math.max(this.size[0], 680), Math.max(this.size[1], 640)]);
+            }
             return r;
         };
 
@@ -50,6 +58,7 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function () {
             const r = onConfigure ? onConfigure.apply(this, arguments) : undefined;
             this.imgs = null;
+            this._h3ClipRefresh?.();
             return r;
         };
 
@@ -58,6 +67,7 @@ app.registerExtension({
             const r = onExecuted ? onExecuted.apply(this, arguments) : undefined;
             // Prevent ComfyUI from displaying default preview image in this picker node
             this.imgs = null;
+            this._h3ClipRefresh?.();
             return r;
         };
 
@@ -156,10 +166,7 @@ function setupClipBinPickerWidget(node) {
     container.appendChild(footer);
 
     // Add DOM widget to node
-    const widget = node.addDOMWidget("clip_bin_gallery", "gallery", container, {
-        serialize: false,
-        hideOnZoom: false,
-    });
+    const { signal } = addPanel(node, "clip_bin_gallery", container);
 
     node.imgs = null;
 
@@ -168,28 +175,14 @@ function setupClipBinPickerWidget(node) {
 
     // Fit node height: shrink so bottom edge flush with container bottom
     function fitToContent() {
-        const containerH = container.offsetHeight || 0;
-        if (containerH === 0) return; // no cards rendered yet
-
-        // Standard widgets (exclude our DOM container widget)
-        const stdWidgetsH = (node.widgets || []).filter(w => w.type !== "custom").length * 28;
-        const inputsH = (node.inputs || []).length * 20;
-        const outputsH = (node.outputs || []).length * 20;
-        const TITLE = 28;
-        const BOTTOM_PAD = 6;
-
-        const target = TITLE + inputsH + outputsH + stdWidgetsH + containerH + BOTTOM_PAD;
-
-        // Only shrink (never grow) — user may intentionally make node bigger
-        if (node.size[1] > target + 4) {
-            node.setSize([node.size[0], target]);
-        }
+        // Nodes 2.0 and Canvas allocate the DOM widget height; keep user sizing.
+        node.setDirtyCanvas?.(true, true);
     }
 
     // Function to open full-featured audio/video modal preview
     function openVideoModal(clip, projectName) {
         const existing = document.getElementById("minimax-video-modal-overlay");
-        if (existing) existing.remove();
+        if (existing) existing._h3Close?.();
 
         const overlay = document.createElement("div");
         overlay.id = "minimax-video-modal-overlay";
@@ -297,11 +290,14 @@ function setupClipBinPickerWidget(node) {
 
         function closeModal() {
             video.pause();
-            video.src = "";
-            overlay.classList.add("closing");
-            setTimeout(() => overlay.remove(), 180);
+            video.removeAttribute("src");
+            video.load();
+            overlay.remove();
             window.removeEventListener("keydown", onKeyDown);
+            signal.removeEventListener("abort", closeModal);
         }
+        overlay._h3Close = closeModal;
+        signal.addEventListener("abort", closeModal, { once: true });
 
         function onKeyDown(e) {
             if (e.key === "Escape") {
@@ -317,20 +313,38 @@ function setupClipBinPickerWidget(node) {
     }
 
     // Function to load and render clips
-    async function loadClips() {
+    const previewCleanups = new Set();
+    function releasePreviews() {
+        for (const cleanup of previewCleanups) cleanup();
+        previewCleanups.clear();
+    }
+    signal.addEventListener("abort", releasePreviews, { once: true });
+    let requestId = 0;
+    async function loadClips(deletedId = null) {
+        if (signal.aborted) return;
+        const currentRequest = ++requestId;
         const currentProject = projectWidget?.value || "Default_Project";
+        if (deletedId != null && selectionWidget?.value === deletedId) {
+            selectionWidget.value = "latest";
+            node.setDirtyCanvas?.(true, true);
+        }
         const currentSelection = (selectionWidget?.value || "latest").trim();
+        updateSelectionDisplay(currentSelection);
         titleWrap.innerHTML = `🎞️ MiniMax Project Clip Bin: <span class="minimax-clip-bin-project-tag">${currentProject}</span>`;
 
         try {
-            const res = await api.fetchApi(`/minimax/clip_bin/list?project=${encodeURIComponent(currentProject)}`);
+            const res = await api.fetchApi(`/minimax/clip_bin/list?project=${encodeURIComponent(currentProject)}`, { cache: "no-store" });
+            if (signal.aborted || currentRequest !== requestId) return;
             if (!res.ok) {
+                releasePreviews();
                 deck.innerHTML = `<div style="padding: 10px; color: #94a3b8; font-size: 11px;">未连接到后台服务或素材库为空</div>`;
                 return;
             }
             const data = await res.json();
+            if (signal.aborted || currentRequest !== requestId) return;
             const clips = data.clips || [];
 
+            releasePreviews();
             deck.innerHTML = "";
 
             // 1. Always append "Auto / Initial" Special Card
@@ -414,9 +428,24 @@ function setupClipBinPickerWidget(node) {
                         // Hover-to-Play dynamic preview (muted, lightweight loop)
                         let hoverVideo = null;
                         let hoverTimer = null;
+                        const stopHover = () => {
+                            clearTimeout(hoverTimer);
+                            hoverTimer = null;
+                            if (hoverVideo) {
+                                hoverVideo.pause();
+                                hoverVideo.removeAttribute("src");
+                                hoverVideo.load();
+                                hoverVideo.remove();
+                                hoverVideo = null;
+                            }
+                        };
+                        previewCleanups.add(stopHover);
 
                         card.addEventListener("mouseenter", () => {
+                            if (signal.aborted) return;
+                            stopHover();
                             hoverTimer = setTimeout(() => {
+                                if (signal.aborted || !card.isConnected) return;
                                 if (!hoverVideo) {
                                     hoverVideo = document.createElement("video");
                                     hoverVideo.className = "minimax-clip-hover-video";
@@ -432,23 +461,7 @@ function setupClipBinPickerWidget(node) {
                             }, 180);
                         });
 
-                        card.addEventListener("mouseleave", () => {
-                            if (hoverTimer) {
-                                clearTimeout(hoverTimer);
-                                hoverTimer = null;
-                            }
-                            if (hoverVideo) {
-                                hoverVideo.pause();
-                                hoverVideo.style.opacity = "0";
-                                const vRef = hoverVideo;
-                                hoverVideo = null;
-                                setTimeout(() => {
-                                    if (vRef && vRef.parentNode) {
-                                        vRef.remove();
-                                    }
-                                }, 200);
-                            }
-                        });
+                        card.addEventListener("mouseleave", stopHover);
 
                         // Double click to open full video modal
                         card.ondblclick = (e) => {
@@ -514,42 +527,25 @@ function setupClipBinPickerWidget(node) {
                         body.appendChild(lineage);
                     }
 
-                    // Delete button (bottom-right of card body)
-                    const delBtn = document.createElement("button");
-                    delBtn.type = "button";
-                    delBtn.className = "h3-asset-delete";
-                    delBtn.title = `删除 ${clip.shot_tag || clip.clip_id}`;
-                    delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
-                    delBtn.addEventListener("click", async (e) => {
-                        e.stopPropagation();
-                        const desc = `项目「${currentProject}」的 ${clip.shot_tag || clip.clip_id}${clip.variants ? "（含一采、二采）" : ""}`;
-                        if (!window.confirm(`永久删除 ${desc}？\n将删除该卡片对应的素材文件、预览和索引；此操作无法撤销。`)) return;
-                        delBtn.disabled = true;
-                        try {
+                    addDeleteButton(body, {
+                        description: `项目「${currentProject}」的 ${clip.shot_tag || clip.clip_id}${clip.variants ? "（含一采、二采）" : ""}`,
+                        signal,
+                        onDelete: async () => {
+                            releasePreviews();
+                            document.getElementById("minimax-video-modal-overlay")?._h3Close?.();
                             const response = await api.fetchApi("/minimax/clip_bin/delete", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                method: "POST", headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ project: currentProject, clip_id: clip.clip_id }),
                             });
                             if (!response.ok) {
                                 const error = await response.json().catch(() => ({}));
-                                window.alert(error.error || `删除失败 (${response.status})`);
-                            } else {
-                                // If the deleted clip was selected, fall back to Auto
-                                if (selectionWidget && selectionWidget.value === clip.clip_id) {
-                                    selectionWidget.value = "latest";
-                                    selectionWidget.callback?.("latest");
-                                }
-                                await loadClips();
+                                throw new Error(error.error || `删除失败 (${response.status})；请确认已重启 ComfyUI。`);
                             }
-                        } catch (err) {
-                            window.alert(`删除失败: ${err.message || err}`);
-                        } finally {
-                            delBtn.disabled = false;
-                        }
+                            if (!signal.aborted && (projectWidget?.value || "Default_Project") === currentProject) {
+                                await loadClips(clip.clip_id);
+                            }
+                        },
                     });
-                    body.appendChild(delBtn);
-
                     card.appendChild(body);
 
                     // Click to select
@@ -603,27 +599,19 @@ function setupClipBinPickerWidget(node) {
         };
     }
 
-    // Initial load
-    setTimeout(loadClips, 200);
-
-    // Multi-panel deletion notification
-    const onDeleted = (e) => {
-        if (e.detail?.project === (projectWidget?.value || "Default_Project")) {
-            loadClips(e.detail.deleted_id);
+    const onDeleted = event => {
+        if (event.detail?.project === (projectWidget?.value || "Default_Project")) {
+            loadClips(event.detail.deleted_id);
         }
     };
     api.addEventListener("minimax/clip_bin/changed", onDeleted);
-
-    // Auto-refresh when generation execution finishes
-    api.addEventListener("executed", (e) => {
-        if (e.detail?.node === String(node.id) || e.detail?.output?.ui?.images) {
-            setTimeout(loadClips, 500);
-        }
-    });
-
-    api.addEventListener("status", (e) => {
-        if (e.detail?.exec_info?.queue_remaining === 0) {
-            setTimeout(loadClips, 600);
-        }
-    });
+    signal.addEventListener("abort", () => api.removeEventListener("minimax/clip_bin/changed", onDeleted), { once: true });
+    node._h3ClipRefresh = loadClips;
+    const onExecuted = () => loadClips();
+    api.addEventListener("execution_success", onExecuted);
+    signal.addEventListener("abort", () => {
+        api.removeEventListener("execution_success", onExecuted);
+        delete node._h3ClipRefresh;
+    }, { once: true });
+    loadClips();
 }

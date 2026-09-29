@@ -54,6 +54,9 @@ large one as "at least this much, possibly plus a whole number of
 cycles".
 """
 
+# Modified by RAFOLIE on 2026-09-28: native ComfyUI V3 schema and execution.
+from comfy_api.latest import io
+
 import logging
 
 import numpy as np
@@ -149,64 +152,35 @@ def _db(a, b):
     return abs(20.0 * np.log10(a / b))
 
 
-class MiniMaxH3MotionContextSeamProbe:
+class MiniMaxH3MotionContextSeamProbe(io.ComfyNode):
     """Measure a chain join: continuation quality and level step."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "clip_b_untrimmed": ("AUDIO", {
-                    "tooltip": "This clip's audio straight off the VAE "
-                               "decode, BEFORE the trim node. It still "
-                               "carries the pinned head, which is what "
-                               "gets compared."}),
-                "trim_frames": ("INT", {
-                    "default": 0, "min": 0, "max": 4096,
-                    "tooltip": "Wire this from the Motion Context node's "
-                               "trim output, the same value the trim node "
-                               "gets. It is the pinned span."}),
-            },
-            "optional": {
-                "clip_a_latent": ("LATENT", {
-                    "tooltip": "The PREVIOUS clip's AV latent: the same "
-                               "one wired into Motion Context's "
-                               "context_latent. The node decodes and "
-                               "tail-matches it itself. Without it only "
-                               "clip B is described, nothing is "
-                               "measured."}),
-                "audio_vae": ("VAE", {
-                    "tooltip": "The H3 audio VAE, needed to decode clip "
-                               "A's audio out of its latent."}),
-                "fps": ("FLOAT", {
-                    "default": 24.0, "min": 1.0, "max": 240.0,
-                    "step": 0.001,
-                    "tooltip": "Must match what you feed Create Video."}),
-                "window_ms": ("FLOAT", {
-                    "default": 50.0, "min": 5.0, "max": 500.0,
-                    "step": 1.0,
-                    "tooltip": "Correlation analysis window."}),
-                "search_ms": ("FLOAT", {
-                    "default": 40.0, "min": 5.0, "max": 500.0,
-                    "step": 1.0,
-                    "tooltip": "Maximum lag searched either side."}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextSeamProbeClipStream',
+            display_name='H3 Motion Context Seam Probe (ClipStream)',
+            category='conditioning/minimax',
+            description="Measure a chain join in the graph: does clip B continue clip A's audio, and does the level step at the cut.",
+            is_output_node=True,
+            inputs=[
+                io.Audio.Input('clip_b_untrimmed', tooltip="This clip's audio straight off the VAE decode, BEFORE the trim node. It still carries the pinned head, which is what gets compared."),
+                io.Int.Input('trim_frames', default=0, min=0, max=4096, tooltip="Wire this from the Motion Context node's trim output, the same value the trim node gets. It is the pinned span."),
+                io.Latent.Input('clip_a_latent', optional=True, tooltip="The PREVIOUS clip's AV latent: the same one wired into Motion Context's context_latent. The node decodes and tail-matches it itself. Without it only clip B is described, nothing is measured."),
+                io.Vae.Input('audio_vae', optional=True, tooltip="The H3 audio VAE, needed to decode clip A's audio out of its latent."),
+                io.Float.Input('fps', optional=True, default=24.0, min=1.0, max=240.0, step=0.001, tooltip='Must match what you feed Create Video.'),
+                io.Float.Input('window_ms', optional=True, default=50.0, min=5.0, max=500.0, step=1.0, tooltip='Correlation analysis window.'),
+                io.Float.Input('search_ms', optional=True, default=40.0, min=5.0, max=500.0, step=1.0, tooltip='Maximum lag searched either side.'),
+            ],
+            outputs=[
+                io.Audio.Output(display_name='audio', tooltip='clip_b_untrimmed, unchanged. Wire it on to the trim node.'),
+                io.String.Output(display_name='report', tooltip='The measurement report, for a Preview Text node.'),
+            ],
+        )
 
-    RETURN_TYPES = ("AUDIO", "STRING")
-    RETURN_NAMES = ("audio", "report")
-    OUTPUT_TOOLTIPS = (
-        "clip_b_untrimmed, unchanged. Wire it on to the trim node.",
-        "The measurement report, for a Preview Text node.",
-    )
-    FUNCTION = "probe"
-    CATEGORY = "conditioning/minimax"
-    OUTPUT_NODE = True
-    DESCRIPTION = ("Measure a chain join in the graph: does clip B "
-                   "continue clip A's audio, and does the level step at "
-                   "the cut.")
 
-    def probe(self, clip_b_untrimmed, trim_frames, clip_a_latent=None,
+    @classmethod
+    def execute(cls, clip_b_untrimmed, trim_frames, clip_a_latent=None,
               audio_vae=None, fps=24.0, window_ms=50.0, search_ms=40.0):
         passthrough = clip_b_untrimmed
         sr = int(clip_b_untrimmed["sample_rate"])
@@ -223,25 +197,25 @@ class MiniMaxH3MotionContextSeamProbe:
             lines += ["", "trim_frames is 0, so there is no pinned span "
                           "and nothing to measure. Wire it from the "
                           "Motion Context node."]
-            return self._finish(passthrough, lines)
+            return cls._finish(passthrough, lines)
         if len(b) < span:
             lines += ["", "clip B is shorter than the pinned span. This "
                           "is the TRIMMED audio; wire the VAE decode "
                           "output instead."]
-            return self._finish(passthrough, lines)
+            return cls._finish(passthrough, lines)
         if clip_a_latent is None or audio_vae is None:
             missing = "clip_a_latent" if clip_a_latent is None else "audio_vae"
             lines += ["", "no %s wired: measuring the join needs the "
                           "previous clip's latent and the audio VAE to "
                           "decode it." % missing]
-            return self._finish(passthrough, lines)
+            return cls._finish(passthrough, lines)
 
         try:
-            a, raw, frames = self._clip_a_audio(clip_a_latent, audio_vae,
+            a, raw, frames = cls._clip_a_audio(clip_a_latent, audio_vae,
                                                 sr, fps)
         except ValueError as exc:
             lines += ["", str(exc)]
-            return self._finish(passthrough, lines)
+            return cls._finish(passthrough, lines)
 
         pad = len(a) - len(raw)
         lines.append("clip A: %d frames, decoded %.4fs, tail-matched to "
@@ -253,15 +227,15 @@ class MiniMaxH3MotionContextSeamProbe:
         if len(a) < span:
             lines.append("clip A is shorter than the pinned span, so "
                          "there is nothing to compare against.")
-            return self._finish(passthrough, lines)
-        lines += self._continuation(a, b, sr, span, window_ms, search_ms)
+            return cls._finish(passthrough, lines)
+        lines += cls._continuation(a, b, sr, span, window_ms, search_ms)
         if pad > 0 and len(raw) >= span:
             # Padding lengthened the array without moving the content, so
             # the two anchors sit `pad` samples apart and one of them is
             # wrong. Measuring both says which: a lag that vanishes
             # against the raw end is an anchoring artifact, one that
             # survives both is in the render.
-            alt = self._continuation(raw, b, sr, span, window_ms,
+            alt = cls._continuation(raw, b, sr, span, window_ms,
                                      search_ms)
             lines += ["", "cross-check: same audio anchored on the raw "
                           "decode instead of the padded end"]
@@ -271,8 +245,8 @@ class MiniMaxH3MotionContextSeamProbe:
                          "is the true alignment."
                          % (pad / sr * 1000.0,))
         lines.append("")
-        lines += self._level(a, b, sr, span)
-        return self._finish(passthrough, lines)
+        lines += cls._level(a, b, sr, span)
+        return cls._finish(passthrough, lines)
 
     @staticmethod
     def _clip_a_audio(latent, audio_vae, sr, fps):
@@ -320,7 +294,8 @@ class MiniMaxH3MotionContextSeamProbe:
             a = np.concatenate([a, np.zeros(want - have)])
         return a, raw, frames
 
-    def _continuation(self, a, b, sr, span, window_ms, search_ms):
+    @classmethod
+    def _continuation(cls, a, b, sr, span, window_ms, search_ms):
         """B's first `span` samples should reconstruct A's last `span`."""
         win = max(1, int(round(window_ms / 1000.0 * sr)))
         hop = max(1, int(round(0.025 * sr)))  # one audio latent step
@@ -397,7 +372,8 @@ class MiniMaxH3MotionContextSeamProbe:
             out.append("  reading: clean continuation.")
         return out
 
-    def _level(self, a, b, sr, span):
+    @classmethod
+    def _level(cls, a, b, sr, span):
         """The delivered join: A's tail against B's first post-trim audio."""
         b_delivered = b[span:]
         n = min(int(0.5 * sr), len(a), len(b_delivered))
@@ -434,13 +410,7 @@ class MiniMaxH3MotionContextSeamProbe:
         report = "\n".join(lines)
         for line in lines:
             _LOG.info("h3_motion_context: %s", line)
-        return {"ui": {"text": [report]},
-                "result": (passthrough, report)}
+        return io.NodeOutput(passthrough, report, ui={'text': [report]})
 
 
-NODE_CLASS_MAPPINGS = {
-    "MiniMaxH3MotionContextSeamProbeClipStream": MiniMaxH3MotionContextSeamProbe,
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3MotionContextSeamProbeClipStream": "H3 Motion Context Seam Probe (ClipStream)",
-}
+NODE_LIST = [MiniMaxH3MotionContextSeamProbe]

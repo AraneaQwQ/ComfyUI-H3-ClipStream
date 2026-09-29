@@ -8,6 +8,9 @@ Usage:
   - DualPicker: selects one card, outputs both latents for continuation.
 """
 
+# Modified by RAFOLIE on 2026-09-28: native ComfyUI V3 schema and execution.
+from comfy_api.latest import io
+
 import os
 import json
 import logging
@@ -32,17 +35,13 @@ from .clip_bin_manager import (
 logger = logging.getLogger("minimax_clip_bin_dual")
 
 
-class AnyType(str):
-    def __ne__(self, __value: object) -> bool:
-        return False
-    def __eq__(self, __value: object) -> bool:
-        return True
 
 
-any_type = AnyType("*")
 
 
-class MiniMaxClipBinDualSaverNode:
+
+
+class MiniMaxClipBinDualSaverNode(io.ComfyNode):
     """Saves dual-variant (一采 + 二采) latents into a single Clip Bin card.
 
     At least one variant must be provided. If only 一采 is connected,
@@ -51,68 +50,38 @@ class MiniMaxClipBinDualSaverNode:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "latent_一采": ("LATENT", {
-                    "tooltip": "【一采 Latent】1次采样器输出的联合音画 Latent。首段可为空 (None)"
-                }),
-            },
-            "optional": {
-                "latent_二采": ("LATENT", {
-                    "tooltip": "【二采 Latent】2次采样器 (upscale) 输出的联合音画 Latent。未跑二采时可不接"
-                }),
-                "images_一采": ("IMAGE", {
-                    "tooltip": "【一采画面】一采路径解码后的帧序列 (来自 VAEDecode/Trim)"
-                }),
-                "images_二采": ("IMAGE", {
-                    "tooltip": "【二采画面】二采路径解码后的帧序列 (来自 VAEDecode/Trim)"
-                }),
-                "audio_一采": ("AUDIO", {
-                    "tooltip": "【一采音频】一采路径的音频流"
-                }),
-                "audio_二采": ("AUDIO", {
-                    "tooltip": "【二采音频】二采路径的音频流"
-                }),
-                "project_name": ("STRING", {
-                    "default": "Default_Project",
-                    "tooltip": "【项目库名称】指定归档到哪个项目池"
-                }),
-                "shot_tag": ("STRING", {
-                    "default": "Auto (自动编号)",
-                    "tooltip": "【镜头标签】如 'Shot 1'、'男主回眸'。填 Auto 则自动递增"
-                }),
-                "prompt": ("STRING", {
-                    "default": "",
-                    "tooltip": "【本段提示词】正向提示词，存入 meta 供回顾"
-                }),
-                "parent_clip_id": ("STRING", {
-                    "default": "",
-                    "tooltip": "【父镜头ID】连接 DualPicker 输出的 clip_id，记录血缘"
-                }),
-                "video_file_一采": (any_type, {
-                    "default": "",
-                    "tooltip": "【一采视频文件】VHS_VideoCombine 的 Filenames 输出或手动路径"
-                }),
-                "video_file_二采": (any_type, {
-                    "default": "",
-                    "tooltip": "【二采视频文件】VHS_VideoCombine 的 Filenames 输出或手动路径"
-                }),
-                "save_video": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "【归档视频】是否将完整 MP4 存入卡片文件夹"
-                }),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxClipBinDualSaver',
+            display_name='MiniMax H3 Dual Clip Saver (一采+二采)',
+            category='MiniMaxH3/ClipStream',
+            is_output_node=True,
+            inputs=[
+                io.Latent.Input('latent_一采', tooltip='【一采 Latent】1次采样器输出的联合音画 Latent。首段可为空 (None)'),
+                io.Latent.Input('latent_二采', optional=True, tooltip='【二采 Latent】2次采样器 (upscale) 输出的联合音画 Latent。未跑二采时可不接'),
+                io.Image.Input('images_一采', optional=True, tooltip='【一采画面】一采路径解码后的帧序列 (来自 VAEDecode/Trim)'),
+                io.Image.Input('images_二采', optional=True, tooltip='【二采画面】二采路径解码后的帧序列 (来自 VAEDecode/Trim)'),
+                io.Audio.Input('audio_一采', optional=True, tooltip='【一采音频】一采路径的音频流'),
+                io.Audio.Input('audio_二采', optional=True, tooltip='【二采音频】二采路径的音频流'),
+                io.String.Input('project_name', optional=True, default='Default_Project', tooltip='【项目库名称】指定归档到哪个项目池'),
+                io.String.Input('shot_tag', optional=True, default='Auto (自动编号)', tooltip="【镜头标签】如 'Shot 1'、'男主回眸'。填 Auto 则自动递增"),
+                io.String.Input('prompt', optional=True, default='', tooltip='【本段提示词】正向提示词，存入 meta 供回顾'),
+                io.String.Input('parent_clip_id', optional=True, default='', tooltip='【父镜头ID】连接 DualPicker 输出的 clip_id，记录血缘'),
+                io.AnyType.Input('video_file_一采', optional=True, tooltip='【一采视频文件】VHS_VideoCombine 的 Filenames 输出或手动路径'),
+                io.AnyType.Input('video_file_二采', optional=True, tooltip='【二采视频文件】VHS_VideoCombine 的 Filenames 输出或手动路径'),
+                io.Boolean.Input('save_video', optional=True, default=True, tooltip='【归档视频】是否将完整 MP4 存入卡片文件夹'),
+            ],
+            outputs=[
+                io.String.Output(display_name='clip_id'),
+                io.Image.Output(display_name='preview_image'),
+                io.String.Output(display_name='project_name'),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "IMAGE", "STRING")
-    RETURN_NAMES = ("clip_id", "preview_image", "project_name")
-    OUTPUT_NODE = True
-    FUNCTION = "save_clip"
-    CATEGORY = "MiniMaxH3/ClipStream"
 
-    def save_clip(
-        self,
+    @classmethod
+    def execute(
+        cls,
         latent_一采: Dict[str, Any],
         latent_二采: Optional[Dict[str, Any]] = None,
         images_一采: Optional[torch.Tensor] = None,
@@ -127,7 +96,7 @@ class MiniMaxClipBinDualSaverNode:
         video_file_二采: Any = "",
         save_video: bool = True,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> io.NodeOutput:
         meta_obj, clip_dir, preview_pil = save_dual_clip_asset(
             latent_a=latent_一采,
             latent_b=latent_二采,
@@ -162,13 +131,10 @@ class MiniMaxClipBinDualSaverNode:
         variant_str = " + ".join(meta_obj.variant_labels)
         logger.info("[Dual Saver] Stored '%s' (%s) in '%s'", meta_obj.clip_id, variant_str, project_name)
 
-        return {
-            "ui": {"images": ui_images},
-            "result": (meta_obj.clip_id, preview_tensor, project_name)
-        }
+        return io.NodeOutput(meta_obj.clip_id, preview_tensor, project_name, ui={'images': ui_images})
 
 
-class MiniMaxClipBinDualPickerNode:
+class MiniMaxClipBinDualPickerNode(io.ComfyNode):
     """Selects a dual-variant clip card and outputs both 一采 and 二采 latents.
 
     Modes:
@@ -180,57 +146,48 @@ class MiniMaxClipBinDualPickerNode:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
+    def define_schema(cls) -> io.Schema:
         projects = list_projects()
-        default_proj = projects[0] if projects else "Default_Project"
-        return {
-            "required": {
-                "project_name": ("STRING", {
-                    "default": default_proj,
-                    "tooltip": "【项目库】要读取的 Clip Bin 项目文件夹名称"
-                }),
-                "mode": ([
-                    "Auto (首段全新 / 后续自动接续)",
-                    "Force Initial (强制首段，无上下文)",
-                    "Strict Chaining (严格接续，空库报错)"
-                ], {
-                    "default": "Auto (首段全新 / 后续自动接续)",
-                    "tooltip": "【运行模式】\n• Auto：空库自动首段；非空自动接续最新\n• Force Initial：强制首段\n• Strict：空库报错"
-                }),
-                "clip_selection": ("STRING", {
-                    "default": "latest",
-                    "tooltip": "【镜头定位】'latest' = 自动最新；或填 clip_id / shot 名称精确匹配"
-                }),
-            },
-            "optional": {
-                "custom_clip_path": ("STRING", {
-                    "default": "",
-                    "tooltip": "【自定义路径】直接指定磁盘上的卡片文件夹绝对路径"
-                }),
-            }
-        }
+        default_proj = projects[0] if projects else 'Default_Project'
+        return io.Schema(
+            node_id='MiniMaxClipBinDualPicker',
+            display_name='MiniMax H3 Dual Clip Picker (一采+二采)',
+            category='MiniMaxH3/ClipStream',
+            inputs=[
+                io.String.Input('project_name', default=default_proj, tooltip='【项目库】要读取的 Clip Bin 项目文件夹名称'),
+                io.Combo.Input('mode', options=['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制首段，无上下文)', 'Strict Chaining (严格接续，空库报错)'], default='Auto (首段全新 / 后续自动接续)', tooltip='【运行模式】\n• Auto：空库自动首段；非空自动接续最新\n• Force Initial：强制首段\n• Strict：空库报错'),
+                io.String.Input('clip_selection', default='latest', tooltip="【镜头定位】'latest' = 自动最新；或填 clip_id / shot 名称精确匹配"),
+                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义路径】直接指定磁盘上的卡片文件夹绝对路径'),
+            ],
+            outputs=[
+                io.Latent.Output(display_name='latent_一采'),
+                io.Latent.Output(display_name='latent_二采'),
+                io.Image.Output(display_name='first_frame'),
+                io.Image.Output(display_name='tail_frame'),
+                io.String.Output(display_name='clip_id'),
+                io.String.Output(display_name='project_name'),
+                io.String.Output(display_name='prompt'),
+            ],
+        )
 
-    RETURN_TYPES = ("LATENT", "LATENT", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("latent_一采", "latent_二采", "first_frame", "tail_frame", "clip_id", "project_name", "prompt")
-    FUNCTION = "pick_clip"
-    CATEGORY = "MiniMaxH3/ClipStream"
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
+    def fingerprint_inputs(cls, **kwargs):
         # Force re-execution on every queued prompt: this node reads mutable disk state.
         # Without it, ComfyUI's RAM-pressure cache serves the stale output of a previous
         # run whenever the widget inputs are unchanged (e.g. Auto + 'latest'), which
         # silently breaks continuation. float('nan') never equals itself -> new key each run.
         return float("nan")
 
-    def pick_clip(
-        self,
+    @classmethod
+    def execute(
+        cls,
         project_name: str = "Default_Project",
         mode: str = "Auto (首段全新 / 后续自动接续)",
         clip_selection: str = "latest",
         custom_clip_path: str = "",
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> io.NodeOutput:
         p_name = (project_name or "Default_Project").strip()
         custom_p = (custom_clip_path or "").strip().strip('"').strip("'")
 
@@ -288,10 +245,7 @@ class MiniMaxClipBinDualPickerNode:
             logger.info("[Dual Picker] Initial generation for '%s' (no context).", p_name)
             card = create_placeholder_card("✨ 首段模式", f"Project: {p_name} | 无接续源，全新生成")
             placeholder = pil_to_tensor(card)
-            return {
-                "ui": {"images": []},
-                "result": (None, None, placeholder, placeholder, "[INITIAL]", p_name, "")
-            }
+            return io.NodeOutput(None, None, placeholder, placeholder, '[INITIAL]', p_name, '', ui={'images': []})
 
         # --- Strict mode with empty bin ---
         if mode.startswith("Strict"):
@@ -343,18 +297,7 @@ class MiniMaxClipBinDualPickerNode:
         variant_str = "+".join([v for v in ("一采", "二采") if variants.get(v, {}).get("has_latent", False)])
         logger.info("[Dual Picker] Loaded '%s' (%s) from '%s'", target_clip_id, variant_str, p_name)
 
-        return {
-            "ui": {"images": []},
-            "result": (latent_a, latent_b, first_frame, tail_frame, target_clip_id, p_name, prompt_str)
-        }
+        return io.NodeOutput(latent_a, latent_b, first_frame, tail_frame, target_clip_id, p_name, prompt_str, ui={'images': []})
 
 
-NODE_CLASS_MAPPINGS = {
-    "MiniMaxClipBinDualSaver": MiniMaxClipBinDualSaverNode,
-    "MiniMaxClipBinDualPicker": MiniMaxClipBinDualPickerNode,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxClipBinDualSaver": "MiniMax H3 Dual Clip Saver (一采+二采)",
-    "MiniMaxClipBinDualPicker": "MiniMax H3 Dual Clip Picker (一采+二采)",
-}
+NODE_LIST = [MiniMaxClipBinDualSaverNode, MiniMaxClipBinDualPickerNode]

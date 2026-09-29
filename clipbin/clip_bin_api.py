@@ -1,8 +1,9 @@
 """HTTP API endpoints for MiniMax H3 Clip Bin web frontend integration."""
 
 import os
-import json
 import asyncio
+from .asset_paths import preview_url
+import json
 import logging
 from typing import Dict, Any, List
 
@@ -26,7 +27,6 @@ from .clip_bin_manager import (
     VIDEO_EXTENSIONS,
     resolve_source_video_path,
 )
-from .asset_paths import preview_url
 
 
 def _probe_and_fix_durations(project_name: str, clip_id: str, entry: Dict[str, Any], clip_dir: str) -> bool:
@@ -85,8 +85,7 @@ def _persist_clip_entry(project_name: str, clip_id: str, entry: Dict[str, Any]) 
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             meta.update(clean)
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2, ensure_ascii=False)
+            atomic_write_json(meta_path, meta)
         except Exception as e:
             logger.warning("[Clip Bin API] Failed to persist probed duration for '%s': %s", clip_id, e)
 
@@ -164,7 +163,7 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
         enriched = dict(c)
         enriched["thumbnail_file"] = preview_file
         enriched["subfolder"] = subfolder
-        enriched["thumbnail_url"] = f"/view?filename={preview_file}&subfolder={subfolder}&type=output" if preview_file else ""
+        enriched["thumbnail_url"] = preview_url(os.path.join(clip_dir, preview_file), subfolder) if preview_file else ""
         enriched["has_video"] = has_video
         enriched["video_file"] = video_file if has_video else ""
         enriched["video_url"] = video_url
@@ -199,6 +198,7 @@ def register_clip_bin_routes() -> None:
         project = request.rel_url.query.get("project", "Default_Project")
         data = await asyncio.to_thread(get_project_clips_api, project)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
+
 
     @routes.post("/minimax/clip_bin/delete")
     async def handle_delete(request):

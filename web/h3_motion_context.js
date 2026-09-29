@@ -1,3 +1,5 @@
+// Modified by RAFOLIE 2026-09-28: Nodes 2.0 DOM panel sizing.
+import { addPanel } from "./dom_panel.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
@@ -321,7 +323,11 @@ app.registerExtension({
       meta.className = "h3mc-chain-meta";
       root.append(row, row2, row3, meta);
       swallow(root);
-      this.addDOMWidget("h3mc_chain", "CHAIN", root, { serialize: false });
+      const { signal } = addPanel(this, "h3mc_chain", root, 160);
+      signal.addEventListener("abort", () => {
+        stopChain(this);
+        this._h3mc = null;
+      }, { once: true });
       this._h3mc = { chaining: false, awaiting: false, remaining: 0, meta, chainBtn };
       approve.onclick = async (e) => {
         e.stopPropagation();
@@ -375,7 +381,7 @@ app.registerExtension({
         }
       };
       paint(this);
-      this.setSize?.([270, 168]);
+      this.setSize?.([Math.max(this.size[0], 300), Math.max(this.size[1], 240)]);
       return r;
     };
     const onConfigure = nodeType.prototype.onConfigure;

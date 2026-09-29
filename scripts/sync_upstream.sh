@@ -17,13 +17,26 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-UPSTREAM="upstream"
+# RAFOLIE 2026-09-28: upstream tracks AraneaQwQ's combined repository.
+# Use a separate remote for the original Motion-Context component.
+UPSTREAM="motion-context"
 UPSTREAM_BRANCH="main"
+
+EXPECTED_URL="https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context"
+REMOTE_URL="$(git remote get-url "$UPSTREAM" 2>/dev/null || true)"
+if [[ "${REMOTE_URL%.git}" != "$EXPECTED_URL" ]]; then
+    echo "Configure the component remote before using this helper:"
+    echo "git remote add motion-context ${EXPECTED_URL}.git"
+    exit 1
+fi
 
 # 我们本地修改过、不应被上游覆盖的文件
 # 如果以后我们改了 motion_context/ 里的某个文件，把它加到这里
 LOCAL_OWNED=(
-    # "motion_context/__init__.py"   # ← 示例: 如果我们的 __init__.py 有定制
+    "motion_context/__init__.py"
+    "motion_context/nodes.py"
+    "motion_context/probe_node.py"
+    "web/h3_motion_context.js"
 )
 
 # 上游文件路径 → 我们本地路径 的映射

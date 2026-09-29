@@ -29,6 +29,9 @@ anchor_mode
           what this mode is asking.
 """
 
+# Modified by RAFOLIE on 2026-09-28: native ComfyUI V3 schema and execution.
+from comfy_api.latest import io
+
 import gc
 import logging
 import os
@@ -314,86 +317,40 @@ def _audio_tail_from_latent(latent, a_frames):
     return tail, rt, float(overhang)
 
 
-class MiniMaxH3MotionContext:
+class MiniMaxH3MotionContext(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "conditioning": ("CONDITIONING",),
-                "vae": ("VAE",),
-                "latent": ("LATENT",),
-                "context_length": (["22", "5", "39", "56"], {
-                    "default": "22",
-                    "tooltip": "Frames of the previous clip's picture to "
-                               "carry over. Only these lengths are whole "
-                               "numbers of latent steps, so only these are "
-                               "offered. 5 is just barely fluid, 22 is "
-                               "nearly seamless. Longer windows pin more "
-                               "motion but come off the front of the "
-                               "delivered clip, so 56 spends 2.3 seconds of "
-                               "the render on frames you throw away."}),
-                "audio_context_length": ("INT", {
-                    "default": 24, "min": 0, "max": 240,
-                    "tooltip": "Frames of tail audio to pin, independent of "
-                               "the picture window. 0 follows it. The window "
-                               "is END-aligned with the pinned video, so "
-                               "this only controls how far back the sound "
-                               "reaches. Multiples of 3 land exactly on the "
-                               "40 Hz audio grid and multiples of 24 are "
-                               "whole seconds: 24 pins the last second. "
-                               "Off-grid values are widened to the nearest "
-                               "whole step."}),
-            },
-            "optional": {
-                "context_frames": ("IMAGE", {
-                    "tooltip": "Decoded frames of the previous clip. Used "
-                               "when no context_latent is wired. When one "
-                               "is, the picture comes from it instead and "
-                               "this is ignored."}),
-                "context_latent": ("LATENT", {
-                    "tooltip": "Previous clip's SAMPLER OUTPUT latent (the "
-                               "same one you wire into the decode nodes). "
-                               "Supplies both picture and sound, sliced "
-                               "straight out, skipping the decode and "
-                               "re-encode that cost a little quality at "
-                               "every link of a chain. Must be the same "
-                               "resolution as the clip being generated."}),
-                "audio_vae": ("VAE", {
-                    "tooltip": "H3 audio VAE. Supply with context_audio to "
-                               "carry the previous clip's tail sound across "
-                               "the join. Not needed when context_latent is "
-                               "wired."}),
-                "context_audio": ("AUDIO", {
-                    "tooltip": "Audio of the previous clip. The tail "
-                               "matching the pinned frames is encoded and "
-                               "pinned alongside them. Ignored when "
-                               "context_latent is wired."}),
-                "enable_audio_context": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "When False, ignore audio even if context_latent is wired. "
-                               "Only video motion context will be used. Default True preserves original behavior."}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextClipStream',
+            display_name='H3 Motion Context (ClipStream)',
+            category='conditioning/minimax',
+            description="Pin a run of consecutive frames from a previous clip as never-denoised conditioning rows, so the model reads real motion instead of guessing it from a single still. With context_latent wired, both picture and sound are sliced from the previous clip's latent, skipping the decode and re-encode that cost a little quality at every link. A last_frame anchor on the incoming conditioning is kept and pinned alongside the head.",
+            inputs=[
+                io.Conditioning.Input('conditioning'),
+                io.Vae.Input('vae'),
+                io.Latent.Input('latent'),
+                io.Combo.Input('context_length', options=['22', '5', '39', '56'], default='22', tooltip="Frames of the previous clip's picture to carry over. Only these lengths are whole numbers of latent steps, so only these are offered. 5 is just barely fluid, 22 is nearly seamless. Longer windows pin more motion but come off the front of the delivered clip, so 56 spends 2.3 seconds of the render on frames you throw away."),
+                io.Int.Input('audio_context_length', default=24, min=0, max=240, tooltip='Frames of tail audio to pin, independent of the picture window. 0 follows it. The window is END-aligned with the pinned video, so this only controls how far back the sound reaches. Multiples of 3 land exactly on the 40 Hz audio grid and multiples of 24 are whole seconds: 24 pins the last second. Off-grid values are widened to the nearest whole step.'),
+                io.Image.Input('context_frames', optional=True, tooltip='Decoded frames of the previous clip. Used when no context_latent is wired. When one is, the picture comes from it instead and this is ignored.'),
+                io.Latent.Input('context_latent', optional=True, tooltip="Previous clip's SAMPLER OUTPUT latent (the same one you wire into the decode nodes). Supplies both picture and sound, sliced straight out, skipping the decode and re-encode that cost a little quality at every link of a chain. Must be the same resolution as the clip being generated."),
+                io.Vae.Input('audio_vae', optional=True, tooltip="H3 audio VAE. Supply with context_audio to carry the previous clip's tail sound across the join. Not needed when context_latent is wired."),
+                io.Audio.Input('context_audio', optional=True, tooltip='Audio of the previous clip. The tail matching the pinned frames is encoded and pinned alongside them. Ignored when context_latent is wired.'),
+                io.Boolean.Input('enable_audio_context', optional=True, default=True, tooltip='When False, ignore audio even if context_latent is wired. Only video motion context will be used. Default True preserves original behavior.'),
+            ],
+            outputs=[
+                io.Conditioning.Output(display_name='conditioning'),
+                io.Int.Output(display_name='trim_frames'),
+            ],
+        )
 
-    RETURN_TYPES = ("CONDITIONING", "INT")
-    RETURN_NAMES = ("conditioning", "trim_frames")
-    FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Pin a run of consecutive frames from a previous clip as "
-                   "never-denoised conditioning rows, so the model reads real "
-                   "motion instead of guessing it from a single still. With "
-                   "context_latent wired, both picture and sound are sliced "
-                   "from the previous clip's latent, skipping the decode and "
-                   "re-encode that cost a little quality at every link. A "
-                   "last_frame anchor on the incoming conditioning is kept "
-                   "and pinned alongside the head.")
 
-    def apply(self, conditioning, vae, latent, context_length,
+    @classmethod
+    def execute(cls, conditioning, vae, latent, context_length,
               audio_context_length=24, context_frames=None,
               context_latent=None, audio_vae=None, context_audio=None,
               enable_audio_context=True):
         if context_latent is None and context_frames is None:
-            return (conditioning, 0)
+            return io.NodeOutput(conditioning, 0)
         encode_mode, anchor_mode = ENCODE_MODE, ANCHOR_MODE
         audio_mode, crop = AUDIO_MODE, CROP
         context_length = int(context_length)
@@ -676,10 +633,10 @@ class MiniMaxH3MotionContext:
                       if audio_end_frame is not None
                       else "stock ref placement"))
                   if ref_audio_t else "off")
-        return (out, trim)
+        return io.NodeOutput(out, trim)
 
 
-class MiniMaxH3MotionContextTrim:
+class MiniMaxH3MotionContextTrim(io.ComfyNode):
     """Drop the pinned head off a decoded clip, picture and sound together.
 
     The pinned frames occupy the start of the delivered timeline, so they
@@ -714,42 +671,28 @@ class MiniMaxH3MotionContextTrim:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "trim_frames": ("INT", {"default": 0, "min": 0, "max": 4096}),
-            },
-            "optional": {
-                "audio": ("AUDIO", {
-                    "tooltip": "Decoded audio for the same clip. Trimmed by the "
-                               "matching duration so sound stays locked to "
-                               "picture. Leave unwired for silent clips."}),
-                "fps": ("FLOAT", {
-                    "default": 24.0, "min": 1.0, "max": 240.0, "step": 0.001,
-                    "tooltip": "Frame rate used to convert the trim into an "
-                               "audio duration. Must match what you feed "
-                               "Create Video."}),
-                "match_tail": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Make the audio duration equal frames/fps "
-                               "exactly, trimming a long tail or padding a "
-                               "short one with silence. H3 rounds its audio "
-                               "grid to the nearest step, so each clip "
-                               "carries about 8ms too much or too little "
-                               "sound, which accumulates at every join in a "
-                               "chain."}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextTrimClipStream',
+            display_name='H3 Motion Context Trim (ClipStream)',
+            category='conditioning/minimax',
+            description='Remove the leading pinned frames from a decoded H3 clip, trimming picture and sound by the same duration.',
+            inputs=[
+                io.Image.Input('images'),
+                io.Int.Input('trim_frames', default=0, min=0, max=4096),
+                io.Audio.Input('audio', optional=True, tooltip='Decoded audio for the same clip. Trimmed by the matching duration so sound stays locked to picture. Leave unwired for silent clips.'),
+                io.Float.Input('fps', optional=True, default=24.0, min=1.0, max=240.0, step=0.001, tooltip='Frame rate used to convert the trim into an audio duration. Must match what you feed Create Video.'),
+                io.Boolean.Input('match_tail', optional=True, default=True, tooltip='Make the audio duration equal frames/fps exactly, trimming a long tail or padding a short one with silence. H3 rounds its audio grid to the nearest step, so each clip carries about 8ms too much or too little sound, which accumulates at every join in a chain.'),
+            ],
+            outputs=[
+                io.Image.Output(display_name='images'),
+                io.Audio.Output(display_name='audio'),
+            ],
+        )
 
-    RETURN_TYPES = ("IMAGE", "AUDIO")
-    RETURN_NAMES = ("images", "audio")
-    FUNCTION = "trim"
-    CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Remove the leading pinned frames from a decoded H3 clip, "
-                   "trimming picture and sound by the same duration.")
 
-    def trim(self, images, trim_frames, audio=None, fps=24.0, match_tail=True):
+    @classmethod
+    def execute(cls, images, trim_frames, audio=None, fps=24.0, match_tail=True):
         n = max(0, int(trim_frames))
         total = int(images.shape[0])
         if n >= total:
@@ -813,7 +756,7 @@ class MiniMaxH3MotionContextTrim:
                       "this node or it will run %.3fs ahead of the picture.",
                       n, total - n, n / float(fps))
 
-        return (out_images, out_audio)
+        return io.NodeOutput(out_images, out_audio)
 
 
 def _under_output(path):
@@ -987,7 +930,7 @@ def _write_safetensors(path, tensors):
             pass
 
 
-class MiniMaxH3MotionContextSaveLatent:
+class MiniMaxH3MotionContextSaveLatent(io.ComfyNode):
     """Save an H3 AV latent to disk so the NEXT run can load it.
 
     Wiring the sampler's output straight into context_latent is a cycle:
@@ -999,41 +942,26 @@ class MiniMaxH3MotionContextSaveLatent:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "latent": ("LATENT", {
-                    "tooltip": "The sampler's output latent (the same one "
-                               "you wire into the decode nodes)."}),
-                "filename_prefix": ("STRING", {
-                    "default": "h3_context/clip",
-                    "tooltip": "Saved under the ComfyUI output folder. The "
-                               "default keeps all chain latents in one "
-                               "folder so the Load node can always pick "
-                               "the newest."}),
-                "clip_index": ("INT", {
-                    "default": 1, "min": 0, "max": 9999, "step": 1,
-                    "tooltip": "Which clip of the chain THIS is. Saves to "
-                               "that clip's fixed slot, so a re-roll "
-                               "overwrites its own reject instead of "
-                               "stacking new files. First clip: 1 here "
-                               "and 0 on the Load node. Clip 2: 2 here "
-                               "and 1 on the Load node. 0 = old behaviour, "
-                               "a new numbered file every run (numbers "
-                               "count runs, not clips)."}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextSaveLatentClipStream',
+            display_name='H3 Motion Context Save Latent (ClipStream)',
+            category='conditioning/minimax',
+            description="Save the sampler's AV latent so the next run's Motion Context node can pin audio from it via the matching Load node.",
+            is_output_node=True,
+            inputs=[
+                io.Latent.Input('latent', tooltip="The sampler's output latent (the same one you wire into the decode nodes)."),
+                io.String.Input('filename_prefix', default='h3_context/clip', tooltip='Saved under the ComfyUI output folder. The default keeps all chain latents in one folder so the Load node can always pick the newest.'),
+                io.Int.Input('clip_index', default=1, min=0, max=9999, step=1, tooltip="Which clip of the chain THIS is. Saves to that clip's fixed slot, so a re-roll overwrites its own reject instead of stacking new files. First clip: 1 here and 0 on the Load node. Clip 2: 2 here and 1 on the Load node. 0 = old behaviour, a new numbered file every run (numbers count runs, not clips)."),
+            ],
+            outputs=[
+                io.String.Output(display_name='latent_path'),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("latent_path",)
-    FUNCTION = "save"
-    OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Save the sampler's AV latent so the next run's Motion "
-                   "Context node can pin audio from it via the matching "
-                   "Load node.")
 
-    def save(self, latent, filename_prefix, clip_index=0):
+    @classmethod
+    def execute(cls, latent, filename_prefix, clip_index=0):
         if _st_save is None:
             raise RuntimeError("h3_motion_context: safetensors is not "
                                "available; cannot save latents.")
@@ -1060,10 +988,10 @@ class MiniMaxH3MotionContextSaveLatent:
         _write_safetensors(path, {"video": video, "audio": audio})
         _LOG.info("h3_motion_context: saved AV latent to %s (video %s, "
                   "audio %s)", path, tuple(video.shape), tuple(audio.shape))
-        return (path,)
+        return io.NodeOutput(path)
 
 
-class MiniMaxH3MotionContextLoadLatent:
+class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
     """Load a saved H3 AV latent for the context_latent input.
 
     clip_index means exactly what it says: set it to the clip you want to
@@ -1084,35 +1012,24 @@ class MiniMaxH3MotionContextLoadLatent:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "latent_path": ("STRING", {
-                    "default": "h3_context",
-                    "tooltip": "A saved latent file, or a folder (relative "
-                               "paths resolve against the ComfyUI output "
-                               "directory). Pointing at a specific FILE "
-                               "always loads that file when clip_index "
-                               "is greater than 0, ignoring the index. "
-                               "clip_index 0 never reads a file."}),
-                "clip_index": ("INT", {
-                    "default": 0, "min": 0, "max": 9999, "step": 1,
-                    "tooltip": "The clip to CONTINUE FROM: that clip's "
-                               "slot is loaded. First clip: 0 here and 1 "
-                               "on the Save node (nothing is loaded). "
-                               "Clip 2 from clip 1: 1 here and 2 on the "
-                               "Save node."}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextLoadLatentClipStream',
+            display_name='H3 Motion Context Load Latent (ClipStream)',
+            category='conditioning/minimax',
+            description='Load a latent saved by H3 Motion Context Save Latent, for the context_latent input only.',
+            inputs=[
+                io.String.Input('latent_path', default='h3_context', tooltip='A saved latent file, or a folder (relative paths resolve against the ComfyUI output directory). Pointing at a specific FILE always loads that file when clip_index is greater than 0, ignoring the index. clip_index 0 never reads a file.'),
+                io.Int.Input('clip_index', default=0, min=0, max=9999, step=1, tooltip="The clip to CONTINUE FROM: that clip's slot is loaded. First clip: 0 here and 1 on the Save node (nothing is loaded). Clip 2 from clip 1: 1 here and 2 on the Save node."),
+            ],
+            outputs=[
+                io.Latent.Output(display_name='LATENT'),
+            ],
+        )
 
-    RETURN_TYPES = ("LATENT",)
-    FUNCTION = "load"
-    CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Load a latent saved by H3 Motion Context Save Latent, "
-                   "for the context_latent input only.")
 
     @classmethod
-    def IS_CHANGED(cls, latent_path, clip_index=0):
+    def fingerprint_inputs(cls, latent_path, clip_index=0):
         # the path string stays constant while the file behind it changes
         # (an overwritten slot), so cache on the resolved file identity
         # instead -- otherwise ComfyUI would happily serve a stale latent
@@ -1125,9 +1042,10 @@ class MiniMaxH3MotionContextLoadLatent:
         except Exception:
             return float("NaN")  # unresolvable: never cache
 
-    def load(self, latent_path, clip_index=0):
+    @classmethod
+    def execute(cls, latent_path, clip_index=0):
         if int(clip_index) <= 0:
-            return (None,)
+            return io.NodeOutput(None)
         if _st_load is None:
             raise RuntimeError("h3_motion_context: safetensors is not "
                                "available; cannot load latents.")
@@ -1145,10 +1063,10 @@ class MiniMaxH3MotionContextLoadLatent:
         # a plain list, not a NestedTensor: only this repo's context_latent
         # input accepts it, which is the point -- it cannot be mistaken
         # for a decodable latent without failing loudly downstream
-        return ({"samples": [video, audio]},)
+        return io.NodeOutput({'samples': [video, audio]})
 
 
-class MiniMaxH3MotionContextChain:
+class MiniMaxH3MotionContextChain(io.ComfyNode):
     """Approve, Run/Re-roll, auto-chain, reset indices, or clear slots.
 
     Load, Save, and this node must sit in the same canvas group or the
@@ -1161,46 +1079,24 @@ class MiniMaxH3MotionContextChain:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "segments": ("INT", {
-                    "default": 0, "min": 0, "max": 9999, "step": 1,
-                    "tooltip": "How many clips Chain generates before it "
-                               "stops. 0 keeps going until you click Stop."
-                }),
-            },
-        }
-
-    RETURN_TYPES = ()
-    FUNCTION = "noop"
-    OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax"
-    DESCRIPTION = ("Approve advances Load/Save and runs the next clip. "
-                   "Run/Re-roll queues the current slot (use this instead "
-                   "of ComfyUI's Run). Chain is Approve on a loop; at "
-                   "Load 0 / Save 1 with no clip 1 saved it generates "
-                   "clip 1 first. segments is how many clips Chain runs "
-                   "before stopping (0 = until Stop). Reset sets Load 0 / "
-                   "Save 1. Clear latents deletes numbered chain slots. "
-                   "Load, Save, and this node must sit in the same canvas "
-                   "group or the buttons do nothing.")
-
-    def noop(self, segments=0):
-        return ()
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxH3MotionContextChainClipStream',
+            display_name='H3 Motion Context Chain (ClipStream)',
+            category='conditioning/minimax',
+            description="Approve advances Load/Save and runs the next clip. Run/Re-roll queues the current slot (use this instead of ComfyUI's Run). Chain is Approve on a loop; at Load 0 / Save 1 with no clip 1 saved it generates clip 1 first. segments is how many clips Chain runs before stopping (0 = until Stop). Reset sets Load 0 / Save 1. Clear latents deletes numbered chain slots. Load, Save, and this node must sit in the same canvas group or the buttons do nothing.",
+            is_output_node=True,
+            inputs=[
+                io.Int.Input('segments', default=0, min=0, max=9999, step=1, tooltip='How many clips Chain generates before it stops. 0 keeps going until you click Stop.'),
+            ],
+            outputs=[
+            ],
+        )
 
 
-NODE_CLASS_MAPPINGS = {
-    "MiniMaxH3MotionContextClipStream": MiniMaxH3MotionContext,
-    "MiniMaxH3MotionContextTrimClipStream": MiniMaxH3MotionContextTrim,
-    "MiniMaxH3MotionContextSaveLatentClipStream": MiniMaxH3MotionContextSaveLatent,
-    "MiniMaxH3MotionContextLoadLatentClipStream": MiniMaxH3MotionContextLoadLatent,
-    "MiniMaxH3MotionContextChainClipStream": MiniMaxH3MotionContextChain,
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3MotionContextClipStream": "H3 Motion Context (ClipStream)",
-    "MiniMaxH3MotionContextTrimClipStream": "H3 Motion Context Trim (ClipStream)",
-    "MiniMaxH3MotionContextSaveLatentClipStream": "H3 Motion Context Save Latent (ClipStream)",
-    "MiniMaxH3MotionContextLoadLatentClipStream": "H3 Motion Context Load Latent (ClipStream)",
-    "MiniMaxH3MotionContextChainClipStream": "H3 Motion Context Chain (ClipStream)",
-}
+    @classmethod
+    def execute(cls, segments=0):
+        return io.NodeOutput()
+
+
+NODE_LIST = [MiniMaxH3MotionContext, MiniMaxH3MotionContextTrim, MiniMaxH3MotionContextSaveLatent, MiniMaxH3MotionContextLoadLatent, MiniMaxH3MotionContextChain]

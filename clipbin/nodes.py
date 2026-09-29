@@ -7,6 +7,9 @@ chosen clip back out as an H3 AV latent that the Motion-Context engine can
 consume as ``context_latent``.
 """
 
+# Modified by RAFOLIE on 2026-09-28: native ComfyUI V3 schema and execution.
+from comfy_api.latest import io
+
 import os
 import logging
 from typing import Any, Dict, Optional
@@ -32,53 +35,44 @@ from .clip_bin_manager import (
 logger = logging.getLogger("minimax_clip_bin")
 
 
-class AnyType(str):
-    """Wildcard type for ComfyUI input slots to accept multiple types (STRING, VHS_FILENAMES, etc.)."""
-    def __ne__(self, __value: object) -> bool:
-        return False
-
-    def __eq__(self, __value: object) -> bool:
-        return True
 
 
-any_type = AnyType("*")
 
 
-class MiniMaxClipBinSaverNode:
+
+
+class MiniMaxClipBinSaverNode(io.ComfyNode):
     """Saves a unified MiniMax H3 AV Latent into the Clip Bin media pool with keyframes, preview card, and rich metadata."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "latent": ("LATENT", {"tooltip": "【核心音画潜空间】采样器输出的原生联合音画 Latent (支持 MiniMax H3 官方 NestedTensor，包含完整视频与音频潜空间)"}),
-                "project_name": ("STRING", {
-                    "default": "Default_Project",
-                    "tooltip": "【项目/分镜箱名称】指定当前镜头归档的项目库（例如：科幻短片、广告场景1）。不同项目之间素材完全隔离，方便多故事独立管理"
-                }),
-                "shot_tag": ("STRING", {
-                    "default": "Auto (自动编号)",
-                    "tooltip": "【镜头标签/备注】镜头的编号或简要动作描述（如：'Shot 1'、'男主回眸'、'远景空镜'）。填 'Auto (自动编号)' 时系统将根据项目内已有镜头数量自动顺延递增为 Shot 1, Shot 2..."
-                }),
-            },
-            "optional": {
-                "images": ("IMAGE", {"tooltip": "【渲染像素画面】连接当前片段解码后的画面 (来自 VAEDecode 或 Trim)。连接后系统将自动截取真实的首帧与尾帧，生成超高清并排缩略图卡片！"}),
-                "audio": ("AUDIO", {"tooltip": "【音频流】连接当前片段的音频 (来自 Trim 或 VAEDecodeAudio)。当自动编码保存 MP4 视频时，将作为音轨同步封装"}),
-                "prompt": ("STRING", {"default": "", "tooltip": "【本段正向提示词】连接输入文本 (Input Text/Prompt)。自动入库保存到 meta.json，以便后续回顾镜头剧情与接续参考"}),
-                "parent_clip_id": ("STRING", {"default": "", "tooltip": "【父镜头血缘ID】连接上一段 Clip Bin Picker 输出的 clip_id。用于在元数据中清晰记录多版本分支历史与承接血缘"}),
-                "video_file_name": (any_type, {"default": "", "tooltip": "【关联合成视频名】连接当前片段合成保存节点 (VHS_VideoCombine) 的 Filenames 输出，或手动输入关联的 MP4 文件名，系统将自动将该视频归档到资产包中"}),
-                "save_video": ("BOOLEAN", {"default": True, "tooltip": "【归档完整视频】是否在资产包内归档或编码生成完整 MP4 视频文件。开启后 Clip Bin Picker 画廊将支持悬停实时微动播放与声画视听弹窗！"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='MiniMaxClipBinSaver',
+            display_name='MiniMax H3 Clip Bin Saver (Media Pool)',
+            category='MiniMaxH3/ClipStream',
+            is_output_node=True,
+            inputs=[
+                io.Latent.Input('latent', tooltip='【核心音画潜空间】采样器输出的原生联合音画 Latent (支持 MiniMax H3 官方 NestedTensor，包含完整视频与音频潜空间)'),
+                io.String.Input('project_name', default='Default_Project', tooltip='【项目/分镜箱名称】指定当前镜头归档的项目库（例如：科幻短片、广告场景1）。不同项目之间素材完全隔离，方便多故事独立管理'),
+                io.String.Input('shot_tag', default='Auto (自动编号)', tooltip="【镜头标签/备注】镜头的编号或简要动作描述（如：'Shot 1'、'男主回眸'、'远景空镜'）。填 'Auto (自动编号)' 时系统将根据项目内已有镜头数量自动顺延递增为 Shot 1, Shot 2..."),
+                io.Image.Input('images', optional=True, tooltip='【渲染像素画面】连接当前片段解码后的画面 (来自 VAEDecode 或 Trim)。连接后系统将自动截取真实的首帧与尾帧，生成超高清并排缩略图卡片！'),
+                io.Audio.Input('audio', optional=True, tooltip='【音频流】连接当前片段的音频 (来自 Trim 或 VAEDecodeAudio)。当自动编码保存 MP4 视频时，将作为音轨同步封装'),
+                io.String.Input('prompt', optional=True, default='', tooltip='【本段正向提示词】连接输入文本 (Input Text/Prompt)。自动入库保存到 meta.json，以便后续回顾镜头剧情与接续参考'),
+                io.String.Input('parent_clip_id', optional=True, default='', tooltip='【父镜头血缘ID】连接上一段 Clip Bin Picker 输出的 clip_id。用于在元数据中清晰记录多版本分支历史与承接血缘'),
+                io.AnyType.Input('video_file_name', optional=True, tooltip='【关联合成视频名】连接当前片段合成保存节点 (VHS_VideoCombine) 的 Filenames 输出，或手动输入关联的 MP4 文件名，系统将自动将该视频归档到资产包中'),
+                io.Boolean.Input('save_video', optional=True, default=True, tooltip='【归档完整视频】是否在资产包内归档或编码生成完整 MP4 视频文件。开启后 Clip Bin Picker 画廊将支持悬停实时微动播放与声画视听弹窗！'),
+            ],
+            outputs=[
+                io.String.Output(display_name='clip_id'),
+                io.Image.Output(display_name='preview_image'),
+                io.String.Output(display_name='bin_path'),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "IMAGE", "STRING")
-    RETURN_NAMES = ("clip_id", "preview_image", "bin_path")
-    OUTPUT_NODE = True
-    FUNCTION = "save_clip"
-    CATEGORY = "MiniMaxH3/ClipStream"
 
-    def save_clip(
-        self,
+    @classmethod
+    def execute(
+        cls,
         latent: Dict[str, Any],
         project_name: str = "Default_Project",
         shot_tag: str = "Auto (自动编号)",
@@ -89,7 +83,7 @@ class MiniMaxClipBinSaverNode:
         video_file_name: Any = "",
         save_video: bool = True,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> io.NodeOutput:
         if latent is None:
             raise ValueError("MiniMaxClipBinSaver: 'latent' input is required.")
 
@@ -161,67 +155,54 @@ class MiniMaxClipBinSaverNode:
         logger.info("[Clip Bin Saver] Stored clip '%s' in '%s' (%s frames | tag: %s | video: '%s')",
                     meta_obj.clip_id, project_name, meta_obj.frames, actual_shot, resolved_video_name)
 
-        return {
-            "ui": {"images": ui_images},
-            "result": (meta_obj.clip_id, preview_tensor, clip_dir)
-        }
+        return io.NodeOutput(meta_obj.clip_id, preview_tensor, clip_dir, ui={'images': ui_images})
 
 
-class MiniMaxClipBinPickerNode:
+class MiniMaxClipBinPickerNode(io.ComfyNode):
     """Visually browses and loads clips from the Clip Bin, with a three-mode switch (Auto / Force Initial / Strict Chaining)."""
 
     @classmethod
-    def INPUT_TYPES(cls):
+    def define_schema(cls) -> io.Schema:
         projects = list_projects()
-        default_proj = projects[0] if projects else "Default_Project"
-        return {
-            "required": {
-                "project_name": ("STRING", {
-                    "default": default_proj,
-                    "tooltip": "【选择项目库】要读取素材的项目文件夹名称（如 Default_Project）。可在 ComfyUI 运行控制台查看已存在的项目名称列表"
-                }),
-                "mode": ([
-                    "Auto (首段全新 / 后续自动接续)",
-                    "Force Initial (强制新建首段，无上下文)",
-                    "Strict Chaining (必须接续指定或最新镜头)"
-                ], {
-                    "default": "Auto (首段全新 / 后续自动接续)",
-                    "tooltip": "【运行工作模式】\n• Auto（强烈推荐）：若项目库为空自动作为首段全新生成；后续运行时全自动接续上一段，无需任何拔线或手动操作！\n• Force Initial：强制开辟首段，忽略库内所有历史素材。\n• Strict Chaining：严格接续模式，库内无镜头时直接报错提示"
-                }),
-                "clip_selection": ("STRING", {
-                    "default": "latest",
-                    "tooltip": "【镜头定位】\n• 填 'latest'（默认）：自动调取最新生成的镜头进行无缝接续\n• 填 clip_id（如 clip_20260908...）：精确跳转或回溯到指定的历史镜头开启新分支\n• 填 shot 名称：按镜头标签名称匹配"
-                }),
-            },
-            "optional": {
-                "custom_clip_path": ("STRING", {
-                    "default": "",
-                    "tooltip": "【自定义物理路径覆盖】可选高级选项。填入绝对路径可直接载入任意磁盘目录下的 Clip Bin 镜头文件夹"
-                }),
-            }
-        }
+        default_proj = projects[0] if projects else 'Default_Project'
+        return io.Schema(
+            node_id='MiniMaxClipBinPicker',
+            display_name='MiniMax H3 Clip Bin Picker (Gallery Loader)',
+            category='MiniMaxH3/ClipStream',
+            inputs=[
+                io.String.Input('project_name', default=default_proj, tooltip='【选择项目库】要读取素材的项目文件夹名称（如 Default_Project）。可在 ComfyUI 运行控制台查看已存在的项目名称列表'),
+                io.Combo.Input('mode', options=['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制新建首段，无上下文)', 'Strict Chaining (必须接续指定或最新镜头)'], default='Auto (首段全新 / 后续自动接续)', tooltip='【运行工作模式】\n• Auto（强烈推荐）：若项目库为空自动作为首段全新生成；后续运行时全自动接续上一段，无需任何拔线或手动操作！\n• Force Initial：强制开辟首段，忽略库内所有历史素材。\n• Strict Chaining：严格接续模式，库内无镜头时直接报错提示'),
+                io.String.Input('clip_selection', default='latest', tooltip="【镜头定位】\n• 填 'latest'（默认）：自动调取最新生成的镜头进行无缝接续\n• 填 clip_id（如 clip_20260908...）：精确跳转或回溯到指定的历史镜头开启新分支\n• 填 shot 名称：按镜头标签名称匹配"),
+                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义物理路径覆盖】可选高级选项。填入绝对路径可直接载入任意磁盘目录下的 Clip Bin 镜头文件夹'),
+            ],
+            outputs=[
+                io.Latent.Output(display_name='latent'),
+                io.Image.Output(display_name='tail_frame'),
+                io.Image.Output(display_name='first_frame'),
+                io.String.Output(display_name='prompt'),
+                io.String.Output(display_name='clip_id'),
+                io.String.Output(display_name='project_name'),
+            ],
+        )
 
-    RETURN_TYPES = ("LATENT", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("latent", "tail_frame", "first_frame", "prompt", "clip_id", "project_name")
-    FUNCTION = "pick_clip"
-    CATEGORY = "MiniMaxH3/ClipStream"
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
+    def fingerprint_inputs(cls, **kwargs):
         # Force re-execution on every queued prompt: this node reads mutable disk state.
         # Without it, ComfyUI's RAM-pressure cache serves the stale output of a previous
         # run whenever the widget inputs are unchanged (e.g. Auto + 'latest'), which
         # silently breaks continuation. float('nan') never equals itself -> new key each run.
         return float("nan")
 
-    def pick_clip(
-        self,
+    @classmethod
+    def execute(
+        cls,
         project_name: str = "Default_Project",
         mode: str = "Auto (首段全新 / 后续自动接续)",
         clip_selection: str = "latest",
         custom_clip_path: str = "",
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> io.NodeOutput:
         p_name = (project_name or "Default_Project").strip()
         custom_p = (custom_clip_path or "").strip().strip('"').strip("'")
 
@@ -240,10 +221,7 @@ class MiniMaxClipBinPickerNode:
                 logger.info("[Clip Bin Picker] Initial generation for project '%s' (mode: %s).", p_name, mode)
                 card = create_placeholder_card("✨ Initial Clip Mode", f"Project: {p_name} | Ready for First Clip (No Context)")
                 placeholder_tensor = pil_to_tensor(card)
-                return {
-                    "ui": {"images": []},
-                    "result": (None, placeholder_tensor, placeholder_tensor, "", "[INITIAL_GENERATION]", p_name)
-                }
+                return io.NodeOutput(None, placeholder_tensor, placeholder_tensor, '', '[INITIAL_GENERATION]', p_name, ui={'images': []})
 
             # Strict Chaining with an empty bin -> loud failure.
             if not clips:
@@ -270,18 +248,7 @@ class MiniMaxClipBinPickerNode:
         logger.info("[Clip Bin Picker] Loaded clip '%s' (%s frames | tag: '%s')",
                     target_clip_id, frames, meta_dict.get("shot_tag", ""))
 
-        return {
-            "ui": {"images": []},
-            "result": (out_latent, tail_tensor, first_tensor, prompt_str, target_clip_id, p_name)
-        }
+        return io.NodeOutput(out_latent, tail_tensor, first_tensor, prompt_str, target_clip_id, p_name, ui={'images': []})
 
 
-NODE_CLASS_MAPPINGS = {
-    "MiniMaxClipBinSaver": MiniMaxClipBinSaverNode,
-    "MiniMaxClipBinPicker": MiniMaxClipBinPickerNode,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxClipBinSaver": "MiniMax H3 Clip Bin Saver (Media Pool)",
-    "MiniMaxClipBinPicker": "MiniMax H3 Clip Bin Picker (Gallery Loader)",
-}
+NODE_LIST = [MiniMaxClipBinSaverNode, MiniMaxClipBinPickerNode]

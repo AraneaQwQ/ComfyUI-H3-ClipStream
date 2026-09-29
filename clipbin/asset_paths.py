@@ -4,9 +4,6 @@ from urllib.parse import urlencode
 
 
 def checked_asset_dir(base, project_dir, asset_id):
-    """Validate that asset_id resolves to a real directory inside project_dir,
-    which must be a direct child of base. Rejects traversal, symlinks, and
-    empty/dangerous IDs."""
     if not isinstance(asset_id, str) or not asset_id or asset_id in (".", "..") or any(c in asset_id for c in '/\\:\x00'):
         raise ValueError("Invalid asset ID")
     root = os.path.normcase(os.path.realpath(base))
@@ -21,7 +18,6 @@ def checked_asset_dir(base, project_dir, asset_id):
 
 
 def preview_url(path, subfolder):
-    """Build a versioned /view URL using file mtime+size as cache-buster."""
     stat = os.stat(path)
     return "/view?" + urlencode({"filename": os.path.basename(path), "subfolder": subfolder,
         "type": "output", "v": f"{stat.st_mtime_ns}-{stat.st_size}"})

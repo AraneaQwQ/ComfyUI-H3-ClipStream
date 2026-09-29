@@ -2,7 +2,7 @@
 
 Provides:
 - Self-contained clip asset packaging (Latent, First/Tail keyframes, Preview composite, Metadata).
-- Project indexing with fast in-memory caching and thread-safe atomic writes.
+- Project indexing read from disk and thread-safe atomic writes.
 - Lineage tracking (parent clip IDs) across multi-shot continuations.
 - Zero-VAE-cost image frame loading and placeholder generation.
 """
@@ -18,12 +18,11 @@ import wave
 import tempfile
 import threading
 import inspect
+from .asset_paths import checked_asset_dir
 from functools import wraps
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-
-from .asset_paths import checked_asset_dir
 
 import torch
 try:
@@ -281,18 +280,7 @@ def upsert_clip_into_index(project_name: str, meta_dict: Dict[str, Any]) -> None
 
 @project_locked
 def delete_clip_asset(project_name: str, clip_id: str) -> bool:
-    """Remove exactly one archived clip (including both variants for dual clips).
-
-    Steps:
-      1. Validate path safety (checked_asset_dir).
-      2. Confirm the clip exists in the project index.
-      3. Save updated index (without this clip).
-      4. Delete the clip directory on disk.
-      5. On disk-delete failure, restore the previous index.
-
-    Returns True on success, False if the clip was not found.
-    Raises OSError if the directory cannot be deleted (e.g. file lock).
-    """
+    """Remove exactly one archived clip, including both variants; never its source video."""
     directory = checked_asset_dir(get_base_bin_dir(), get_project_dir(project_name), clip_id)
     idx = load_project_index(project_name)
     if not any(c.get("clip_id") == clip_id for c in idx.get("clips", [])):
@@ -300,7 +288,7 @@ def delete_clip_asset(project_name: str, clip_id: str) -> bool:
     previous = dict(idx)
     idx["clips"] = [c for c in idx.get("clips", []) if c.get("clip_id") != clip_id]
     idx["total_clips"] = len(idx["clips"])
-    idx["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    idx["last_updated"] = datetime.now().isoformat()
     save_project_index(project_name, idx)
     try:
         if os.path.exists(directory):
