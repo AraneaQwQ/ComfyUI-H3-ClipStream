@@ -8,3 +8,6 @@ venv/
 .cursor/
 .DS_Store
 *.safetensors
+
+# Version-rule snapshots (see VERSION.md). Kept on disk, out of git.
+archive/

@@ -165,15 +165,27 @@ ComfyUI-H3-ClipStream/
 ├── __init__.py              # Entry point: loads both sub-packages, merges MAPPINGS
 ├── LICENSE                  # GPLv3
 ├── ATTRIBUTION.md
+├── VERSION.md               # Version rule: archive/<date>-<commit> snapshots + notes
 ├── requirements.txt
 ├── README.md
+├── V3_MIGRATION.md          # V3 API migration notes
+├── CACHE_AND_DELETION.md    # Index cache & card deletion behaviour
 ├── examples/
 │   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # Ready-to-load example workflow
 ├── scripts/
 │   └── sync_upstream.sh     # Helper: track upstream Motion-Context updates
+├── tests/                   # unittest suite: run with python -m unittest discover -s tests -t .
+│   ├── _support.py          # Loaders: ComfyUI on sys.path, clipbin without comfy_api
+│   ├── test_node_schema.py  # Locks the 10 node ids, categories, inputs, outputs, options
+│   ├── test_frame_grid.py   # Frame <-> latent-step grid invariants
+│   ├── test_latent_codec.py # latent pack/unpack + image/audio standardising
+│   ├── test_asset_paths.py  # Card path safety & preview URLs
+│   └── test_clip_bin_store.py # Single/dual card round-trip, index, deletion
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context frontend
 │   ├── clip_bin_picker.js         # Clip Bin gallery frontend (card wrap layout)
+│   ├── dom_panel.js               # DOM panel used by the Pickers
+│   ├── delete_button.js           # Card delete buttons + confirm flow
 │   └── clip_bin_picker.css
 ├── motion_context/
 │   ├── __init__.py
@@ -352,15 +364,27 @@ ComfyUI-H3-ClipStream/
 ├── __init__.py              # 入口：载入两个子包，合并 MAPPINGS
 ├── LICENSE                  # GPLv3
 ├── ATTRIBUTION.md
+├── VERSION.md               # 版本铁规：archive/<日期>-<commit> 快照 + 说明
 ├── requirements.txt
 ├── README.md
+├── V3_MIGRATION.md          # V3 API 迁移说明
+├── CACHE_AND_DELETION.md    # 索引缓存与卡片删除行为
 ├── examples/
 │   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # 现成示例工作流
 ├── scripts/
 │   └── sync_upstream.sh     # 辅助脚本：跟踪上游 Motion-Context 更新
+├── tests/                   # unittest 套件：python -m unittest discover -s tests -t .
+│   ├── _support.py          # 装载助手：ComfyUI 进 sys.path、clipbin 不依赖 comfy_api
+│   ├── test_node_schema.py  # 锁定 10 个节点的 id、category、输入输出与选项
+│   ├── test_frame_grid.py   # 帧 ↔ latent step 网格不变量
+│   ├── test_latent_codec.py # latent 打包/解包与图像/音频标准化
+│   ├── test_asset_paths.py  # 卡片路径安全与预览 URL
+│   └── test_clip_bin_store.py # 单卡/双卡往返、索引与删除
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context 前端
 │   ├── clip_bin_picker.js         # Clip Bin 画廊前端（卡片换行布局）
+│   ├── dom_panel.js               # Picker 使用的 DOM 面板
+│   ├── delete_button.js           # 卡片删除按钮与确认流程
 │   └── clip_bin_picker.css
 ├── motion_context/
 │   ├── __init__.py
