@@ -2,6 +2,7 @@
 
 **Current: ComfyUI V3 API + Nodes 2.0.** Requires ComfyUI ≥ 0.37.0. See [V3_MIGRATION.md](V3_MIGRATION.md) for details.
 Card deletion supported on both single & dual pickers. See [CACHE_AND_DELETION.md](CACHE_AND_DELETION.md).
+Long Builder stitches a project's archived shots into one film. See [Long video assembly](#long-video-assembly).
 
 **[English](#english)** | **[简体中文](#简体中文)**
 
@@ -64,6 +65,11 @@ So `Picker.latent` plugs directly into `context_latent` with zero adapters.
 
 Dual Clip Picker ──► latent_一采 ─► Motion Context (一采 path) . context_latent
                  └► latent_二采 ─► Motion Context (二采 path) . context_latent
+
+[Long film]
+  Clip Long Builder  (project_name + end_clip_id → walks parent_clip_id backwards)
+    → ffprobe pre-check per segment → ffmpeg concat
+    → output/h3_long/<project>/<name>.mp4   (never written back into the card library)
 ```
 
 ---
@@ -86,9 +92,11 @@ Restart ComfyUI, hard-refresh the browser (`Ctrl+F5`).
 
 Clips live in `ComfyUI/output/h3-clipstream/<project_name>/`. If you have an older install with `output/minimax_h3_bins`, it is **auto-migrated** (renamed) on first run. A ready-to-load example workflow is in `examples/`.
 
+Long films built by the Long Builder go to `output/h3_long/<project_name>/` and are **not** part of the card library.
+
 ---
 
-### Nodes (10 total)
+### Nodes (11 total)
 
 #### Clip Bin (`MiniMaxH3/ClipStream`)
 
@@ -98,6 +106,7 @@ Clips live in `ComfyUI/output/h3-clipstream/<project_name>/`. If you have an old
 | **Clip Bin Picker** | Visual card gallery. 3 modes: **Auto** / **Force Initial** / **Strict Chaining**. Outputs `latent`, `tail_frame`, `first_frame`, `prompt`, `clip_id`, `project_name` |
 | **Dual Clip Saver** (一采+二采) | Archives the latents of both sampler passes (一采 required, 二采 optional) into **one card**, badged 「仅一采」 / 「含一采+二采」 |
 | **Dual Clip Picker** (一采+二采) | Same 3 modes as the Picker. One card click outputs **both** `latent_一采` and `latent_二采` (a pass that didn't run outputs `None`), plus `first_frame` / `tail_frame` / `prompt` / `clip_id` / `project_name` |
+| **Clip Long Builder** | Reads the MP4s already archived in a project's cards, resolves the shot order from the lineage, pre-checks every segment with ffprobe and joins them into one long video. Output goes to `output/h3_long/<project>/` — never into the card library |
 
 #### Motion-Context (`conditioning/minimax`)
 
@@ -125,6 +134,50 @@ Clips live in `ComfyUI/output/h3-clipstream/<project_name>/`. If you have an old
 
 ---
 
+### Long video assembly
+
+`Clip Long Builder` (`MiniMaxClipBinLongBuilder`) reads the MP4s that the Savers already archived inside each card and joins them in shot order, so the manual stitching step is gone. It is a read-side node: it never writes into a card, never touches a latent, and never re-encodes unless the segments cannot be joined as they are.
+
+**Canonical wiring** — the one rule that keeps both the bin and the long film clean:
+
+| Output | What to feed it |
+|--------|-----------------|
+| `latent_*` (Picker / Dual Picker) | the **full** sampler-output latent — continuation needs the pinned frames |
+| `images_*` / `audio_*` / `video_file_*` (Saver / Dual Saver) | the **Trimmed** output — the delivered clip, without the overlap frames |
+
+Feed it that way and every card's video is exactly what the viewer should see, so joins never repeat a beat. Cards saved before Trim still work; the node detects them (see pre-flight checks).
+
+**How the shot order is resolved**
+
+- Default: start at `end_clip_id` (`latest` = newest card) and walk `parent_clip_id` backwards, then reverse → oldest first. The lineage is the same one the Pickers already record.
+- `start_clip_id` stops the walk early — use it to join only the last few shots.
+- `clip_sequence` (comma or newline separated `clip_id` / shot tags) replaces the walk entirely. Use it on branched projects, where lineage alone cannot say which branch you want.
+- Broken links, cycles and unknown references are reported in `report` instead of failing silently.
+
+**Options**
+
+| Option | Notes |
+|--------|-------|
+| `variant_policy` | **优先二采** (default: use the 二采 video when the card has one, otherwise fall back to 一采) / **仅一采** / **仅二采**. Cards that only hold one variant ignore the policy. |
+| `join_mode` | **auto** (default): lossless `-c copy` when every segment matches, otherwise re-encode to unify. **copy**: hard error on any mismatch — for projects you have verified are uniform. **reencode**: always re-encode; this is how you force mixed-resolution history together. |
+| `fps` | Used only when re-encoding. Match the generation fps (24). |
+| `skip_missing` | `False` (default): a shot with no archived video is a hard error that lists the offenders. `True`: skip them and say so in the report. |
+| `output_name` | Optional. Default is `<project>_<n>shots_<timestamp>.mp4`. |
+
+**Pre-flight checks** — every segment is measured with ffprobe *before* anything is written:
+
+- Resolution / frame rate / audio presence / sample-rate mismatch → `auto` switches to re-encode and says which parameter differed; `copy` refuses and tells you to switch.
+- **Untrimmed seam**: if a segment's measured video frame count is **not below** its latent frame count, the pinned overlap frames are still in that video and the film repeats a beat at the join. The report names the segment — re-archive it from the Trim output and rebuild. The first segment is never flagged (it has no overlap by definition).
+- Frame counts come from ffprobe, never from the card's `meta.frames` (that number is the latent count — see below).
+
+> Card badges show the **latent** frame count, because that is what continuation consumes. Overlap frames are therefore *not* annotated on the card; they are only explained in the Long Builder's `report` and log.
+
+Output lands in `output/h3_long/<project_name>/` — **not** the card library, so a long film can never be picked as a clip by accident. `filename` is an absolute path you can hand to `VHS_VideoCombine` / `SaveVideo` or open directly; `total_frames` and `duration_seconds` are measured from the finished file.
+
+Requires `ffmpeg`/`ffprobe` on `PATH` (the Savers already need them to make preview cards).
+
+---
+
 ### Key parameters
 
 | Parameter | Notes |
@@ -143,6 +196,9 @@ Clips live in `ComfyUI/output/h3-clipstream/<project_name>/`. If you have an old
 | Picker: "No clips found" | No clips in that `project_name`. Use **Auto** mode or check the Saver's project name matches. |
 | Audio seam jump / "sounds similar but isn't the same" | Insert a **Seam Probe** between Decode and Trim. Read the `report` output for `lag_ms`, `corr`, level step. |
 | Resolution mismatch rejection | Ensure `context_latent` and target clip are the same resolution. |
+| Long Builder: the film repeats a beat at a join | That segment was archived from the **untrimmed** output. Re-run the Saver with the Trim output on `images_*`/`audio_*`, then rebuild — the report names the segment. |
+| Long Builder: parameters differ, `copy` mode refused | Segments differ in resolution, fps or audio. Use **auto** or **reencode**; `copy` is only for verified-uniform projects. |
+| Long Builder: a shot has no archived video | That card was archived with `save_video` off. Re-archive the segment, or turn on `skip_missing`. |
 | Dual Picker: 二采 latent is empty | That card was archived with only 一采 (二采 pass never ran). Expected — the 一采 path still works. |
 
 ---
@@ -176,11 +232,12 @@ ComfyUI-H3-ClipStream/
 │   └── sync_upstream.sh     # Helper: track upstream Motion-Context updates
 ├── tests/                   # unittest suite: run with python -m unittest discover -s tests -t .
 │   ├── _support.py          # Loaders: ComfyUI on sys.path, clipbin without comfy_api
-│   ├── test_node_schema.py  # Locks the 10 node ids, categories, inputs, outputs, options
+│   ├── test_node_schema.py  # Locks the 11 node ids, categories, inputs, outputs, options
 │   ├── test_frame_grid.py   # Frame <-> latent-step grid invariants
 │   ├── test_latent_codec.py # latent pack/unpack + image/audio standardising
 │   ├── test_asset_paths.py  # Card path safety & preview URLs
-│   └── test_clip_bin_store.py # Single/dual card round-trip, index, deletion
+│   ├── test_clip_bin_store.py # Single/dual card round-trip, index, deletion
+│   └── test_long_builder.py # Shot-order resolution, join classification, seam warnings
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context frontend
 │   ├── clip_bin_picker.js         # Clip Bin gallery frontend (card wrap layout)
@@ -200,7 +257,9 @@ ComfyUI-H3-ClipStream/
     ├── dual_manager.py            # Dual-variant archive & load
     ├── _shared.py
     ├── clip_bin_manager.py
-    └── clip_bin_api.py
+    ├── clip_bin_api.py
+    ├── long_builder.py          # Long film assembly: shot order, ffprobe pre-check, concat
+    └── long_nodes.py            # Clip Long Builder node
 ```
 
 ---
@@ -263,6 +322,11 @@ MiniMax H3 是**音视频一体**模型——视频和音频活在同一个 `Nes
 
 Dual Clip Picker ──► latent_一采 ─► Motion Context（一采路）. context_latent
                  └► latent_二采 ─► Motion Context（二采路）. context_latent
+
+[长片]
+  Clip Long Builder （project_name + end_clip_id → 沿 parent_clip_id 往回回溯）
+    → 逐段 ffprobe 预检 → ffmpeg 拼接
+    → output/h3_long/<项目>/<文件名>.mp4   （不写回卡片库）
 ```
 
 ---
@@ -285,9 +349,11 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 
 素材存放在 `ComfyUI/output/h3-clipstream/<项目名>/`。若旧版本存在 `output/minimax_h3_bins`，首次运行会**自动迁移**（改名）。现成可载入的示例工作流见 `examples/` 目录。
 
+Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡片库**。
+
 ---
 
-### 节点清单（共 10 个）
+### 节点清单（共 11 个）
 
 #### Clip Bin（类别 `MiniMaxH3/ClipStream`）
 
@@ -297,6 +363,7 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 | **Clip Bin Picker** | 可视化卡片画廊。三种模式：**Auto** / **Force Initial** / **Strict Chaining**。输出 `latent`、`tail_frame`、`first_frame`、`prompt`、`clip_id`、`project_name` |
 | **Dual Clip Saver** (一采+二采) | 把两条采样器路的 latent（一采必填、二采可选）归档进**同一张卡片**，卡片标注「仅一采」/「含一采+二采」 |
 | **Dual Clip Picker** (一采+二采) | 与 Picker 相同的三种模式。点一次卡片同时输出 `latent_一采` 与 `latent_二采`（没跑的那条路输出 `None`），另输出 `first_frame`/`tail_frame`/`prompt`/`clip_id`/`project_name` |
+| **Clip Long Builder** | 按镜头顺序读取项目卡片里已归档的 MP4，从血缘解析镜头顺序，逐段 ffprobe 预检后拼成一个长视频。输出在 `output/h3_long/<项目>/`，不进卡片库 |
 
 #### Motion-Context（类别 `conditioning/minimax`）
 
@@ -324,6 +391,50 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 
 ---
 
+### 长视频拼接
+
+`Clip Long Builder`（`MiniMaxClipBinLongBuilder`）读取 Saver 已经归档进卡片的 MP4，按镜头顺序拼成一个长视频——手动拼接这一步没了。它和 Picker 一样是只读侧节点：不写卡片、不碰 latent，除非各段本身接不起来，否则不重编码。
+
+**规范接线**——让素材库和长片都保持干净的那一条规则：
+
+| 输出 | 应该接什么 |
+|------|-----------|
+| `latent_*`（Picker / Dual Picker） | **完整**的采样器输出 latent——接续需要 pinned 帧 |
+| `images_*` / `audio_*` / `video_file_*`（Saver / Dual Saver） | **Trim 之后**的输出——交付片段，不含重叠帧 |
+
+按这个接，每张卡片的视频就是观众该看到的画面，接缝不会重复一小段。已经用未裁版本归档过的卡片照样能拼，节点会自己发现（见下面的预检）。
+
+**镜头顺序怎么定**
+
+- 默认：从 `end_clip_id`（`latest` = 最新卡片）沿 `parent_clip_id` 往回回溯，再反转 → 从最早一段到终点。血缘就是 Picker 一直在记录的那份。
+- `start_clip_id` 提前停止回溯——只想拼最后几段时填它。
+- `clip_sequence`（逗号或换行分隔的 `clip_id` / 镜头标签）完全取代血缘回溯。项目分了支、要指定走哪条线时用它。
+- 断链、循环、找不到的引用都写进 `report`，不会静默出错。
+
+**选项**
+
+| 选项 | 说明 |
+|------|------|
+| `variant_policy` | **优先二采**（默认：卡片有二采视频就用二采，没有则退回一采）/ **仅一采** / **仅二采**。只归档了一个变体的卡片忽略该策略。 |
+| `join_mode` | **auto**（默认）：各段参数一致时无损直拷 `-c copy`，不一致自动重编码统一。**copy**：只允许直拷，参数不一致直接报错——用于确认过参数一致的项目。**reencode**：一律重编码，把不同分辨率的历史片段强行接在一起就用它。 |
+| `fps` | 只在重编码时生效，应与生成时的帧率一致（24）。 |
+| `skip_missing` | `False`（默认）：某段没有归档视频就报错并列出缺哪些镜头。`True`：跳过这些段，报告里写明。 |
+| `output_name` | 可选。默认 `<项目>_<段数>shots_<时间戳>.mp4`。 |
+
+**预检**——写任何东西之前，每一段都先用 ffprobe 实测：
+
+- 分辨率 / 帧率 / 有无音轨 / 采样率不一致 → `auto` 改用重编码并说明是哪一项不一致；`copy` 直接报错并提示改模式。
+- **未裁的接缝**：某段实测视频帧数**没有少于**它的 latent 帧数，说明 pinned 重叠帧还留在视频里，长片在这个接缝处会重复一小段画面。报告会点名这一段——把 Trim 之后的输出重新归档一次再拼。第一段永不告警（它按定义没有重叠）。
+- 帧数一律以 ffprobe 实测为准，不读卡片里的 `meta.frames`（那个是 latent 口径，见下）。
+
+> 卡片上显示的帧数是 **latent 口径**，因为接续消费的就是它。因此重叠帧**不在卡片上加备注**（避免被误读成「当前保存的视频里有重叠」），只在 Long Builder 的 `report` 和日志里说明。
+
+输出在 `output/h3_long/<项目名>/`，**不进卡片库**，所以长片不会被误当成一个镜头挑出来。`filename` 是绝对路径，可直接接 `VHS_VideoCombine` / `SaveVideo` 或本地播放；`total_frames`、`duration_seconds` 都是拼完后对成品实测的。
+
+需要 `PATH` 里有 `ffmpeg`/`ffprobe`（Saver 生成预览卡时本来就要用）。
+
+---
+
 ### 关键参数
 
 | 参数 | 说明 |
@@ -342,6 +453,9 @@ pip install -r ComfyUI-H3-ClipStream/requirements.txt   # 可选；ComfyUI 通�
 | Picker 报"No clips found" | 该 `project_name` 库里没有镜头。用 **Auto** 模式或确认 Saver 项目名一致。 |
 | 音频接缝跳变 / "像但不是同一条" | 在 Decode 和 Trim 之间插 **Seam Probe**，读 `report` 输出的 `lag_ms`、`corr`、电平 step。 |
 | 分辨率不匹配被拒绝 | 确保 `context_latent` 与目标片段同分辨率。 |
+| Long Builder：长片在某个接缝处重复一小段画面 | 那一段是用**未裁**的输出归档的。把 Trim 之后的输出接回 Saver 的 `images_*`/`audio_*` 重新归档，再拼一次——报告会点名这一段。 |
+| Long Builder：`copy` 模式报「各段参数不一致」 | 各段分辨率、帧率或音频不同。改用 **auto** 或 **reencode**；`copy` 只用于确认过参数一致的项目。 |
+| Long Builder：某段没有归档视频 | 该卡片归档时 `save_video` 是关的。重新归档这一段，或打开 `skip_missing`。 |
 | Dual Picker 的 二采 latent 为空 | 该卡片归档时只有一采（二采路没跑过），属正常现象；一采路照常可用。 |
 
 ---
@@ -375,11 +489,12 @@ ComfyUI-H3-ClipStream/
 │   └── sync_upstream.sh     # 辅助脚本：跟踪上游 Motion-Context 更新
 ├── tests/                   # unittest 套件：python -m unittest discover -s tests -t .
 │   ├── _support.py          # 装载助手：ComfyUI 进 sys.path、clipbin 不依赖 comfy_api
-│   ├── test_node_schema.py  # 锁定 10 个节点的 id、category、输入输出与选项
+│   ├── test_node_schema.py  # 锁定 11 个节点的 id、category、输入输出与选项
 │   ├── test_frame_grid.py   # 帧 ↔ latent step 网格不变量
 │   ├── test_latent_codec.py # latent 打包/解包与图像/音频标准化
 │   ├── test_asset_paths.py  # 卡片路径安全与预览 URL
-│   └── test_clip_bin_store.py # 单卡/双卡往返、索引与删除
+│   ├── test_clip_bin_store.py # 单卡/双卡往返、索引与删除
+│   └── test_long_builder.py # 镜头顺序解析、拼接方式判定、接缝告警
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context 前端
 │   ├── clip_bin_picker.js         # Clip Bin 画廊前端（卡片换行布局）
@@ -399,5 +514,7 @@ ComfyUI-H3-ClipStream/
     ├── dual_manager.py            # 双变体归档与读取
     ├── _shared.py
     ├── clip_bin_manager.py
-    └── clip_bin_api.py
+    ├── clip_bin_api.py
+    ├── long_builder.py          # 长视频拼接：镜头顺序、ffprobe 预检、concat
+    └── long_nodes.py            # Clip Long Builder 节点
 ```

@@ -22,11 +22,16 @@ PKG, PKG_ERROR = _support.load_plugin_package()
 CLIP_CATEGORY = "MiniMaxH3/ClipStream"
 CONTEXT_CATEGORY = "conditioning/minimax"
 
+# clipbin.long_nodes is the newest entry; another node module belongs here too.
+MODULES = ("clipbin.nodes", "clipbin.dual_nodes", "clipbin.long_nodes",
+           "motion_context.nodes", "motion_context.probe_node")
+
 EXPECTED_OUTPUTS = {
     "MiniMaxClipBinSaver": ["clip_id", "preview_image", "bin_path"],
     "MiniMaxClipBinPicker": ["latent", "tail_frame", "first_frame", "prompt", "clip_id", "project_name"],
     "MiniMaxClipBinDualSaver": ["clip_id", "preview_image", "project_name"],
     "MiniMaxClipBinDualPicker": ["latent_一采", "latent_二采", "first_frame", "tail_frame", "clip_id", "project_name", "prompt"],
+    "MiniMaxClipBinLongBuilder": ["filename", "total_frames", "duration_seconds", "report"],
     "MiniMaxH3MotionContextClipStream": ["conditioning", "trim_frames"],
     "MiniMaxH3MotionContextTrimClipStream": ["images", "audio"],
     "MiniMaxH3MotionContextSaveLatentClipStream": ["latent_path"],
@@ -51,6 +56,9 @@ EXPECTED_INPUTS = {
                                 ("video_file_二采", True), ("save_video", True)],
     "MiniMaxClipBinDualPicker": [("project_name", False), ("mode", False),
                                  ("clip_selection", False), ("custom_clip_path", True)],
+    "MiniMaxClipBinLongBuilder": [("project_name", False), ("end_clip_id", False), ("start_clip_id", True),
+                                      ("clip_sequence", True), ("variant_policy", False), ("join_mode", False),
+                                      ("fps", True), ("skip_missing", True), ("output_name", True)],
     "MiniMaxH3MotionContextClipStream": [("conditioning", False), ("vae", False), ("latent", False),
                                          ("context_length", False), ("audio_context_length", False),
                                          ("context_frames", True), ("context_latent", True),
@@ -81,7 +89,7 @@ def _module(dotted):
 
 def _schemas():
     schemas = {}
-    for module_name in ("clipbin.nodes", "clipbin.dual_nodes", "motion_context.nodes", "motion_context.probe_node"):
+    for module_name in MODULES:
         for node_class in _module(module_name).NODE_LIST:
             schema = node_class.define_schema()
             schemas[schema.node_id] = schema
@@ -90,16 +98,16 @@ def _schemas():
 
 @unittest.skipIf(PKG is None, "the plugin needs a ComfyUI install on sys.path: %s" % PKG_ERROR)
 class TestNodeRegistry(unittest.TestCase):
-    def test_exactly_the_documented_ten_nodes_are_registered(self):
+    def test_exactly_the_documented_nodes_are_registered(self):
         self.assertEqual(sorted(_schemas().keys()), sorted(EXPECTED_OUTPUTS.keys()))
 
     def test_no_node_class_is_registered_twice(self):
         classes = []
-        for module_name in ("clipbin.nodes", "clipbin.dual_nodes", "motion_context.nodes", "motion_context.probe_node"):
+        for module_name in MODULES:
             classes.extend(_module(module_name).NODE_LIST)
         self.assertEqual(len(classes), len(set(classes)))
 
-    def test_extension_serves_the_same_ten_nodes(self):
+    def test_extension_serves_the_same_nodes(self):
         served = asyncio.run(PKG.H3ClipStreamExtension().get_node_list())
         self.assertEqual(sorted(cls.define_schema().node_id for cls in served), sorted(EXPECTED_OUTPUTS.keys()))
 
@@ -138,7 +146,7 @@ class TestNodeInterfaces(unittest.TestCase):
 
     def test_graph_terminal_nodes_are_marked_as_output_nodes(self):
         schemas = _schemas()
-        for node_id in ("MiniMaxClipBinSaver", "MiniMaxClipBinDualSaver",
+        for node_id in ("MiniMaxClipBinSaver", "MiniMaxClipBinDualSaver", "MiniMaxClipBinLongBuilder",
                         "MiniMaxH3MotionContextChainClipStream", "MiniMaxH3MotionContextSeamProbeClipStream"):
             self.assertTrue(schemas[node_id].is_output_node, node_id)
         for node_id in ("MiniMaxClipBinPicker", "MiniMaxClipBinDualPicker", "MiniMaxH3MotionContextClipStream"):

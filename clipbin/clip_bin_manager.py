@@ -134,12 +134,15 @@ def get_base_bin_dir() -> str:
     return bin_dir
 
 
+def sanitize_project_name(project_name: str) -> str:
+    """Maps a user-typed project name onto its single safe folder name."""
+    safe_name = "".join(c for c in (project_name or "Default_Project") if c.isalnum() or c in ("_", "-", " ")).strip()
+    return safe_name or "Default_Project"
+
+
 def get_project_dir(project_name: str) -> str:
     """Returns and ensures the path for a given project bin."""
-    safe_name = "".join(c for c in (project_name or "Default_Project") if c.isalnum() or c in ("_", "-", " ")).strip()
-    if not safe_name:
-        safe_name = "Default_Project"
-    p_dir = os.path.join(get_base_bin_dir(), safe_name)
+    p_dir = os.path.join(get_base_bin_dir(), sanitize_project_name(project_name))
     os.makedirs(p_dir, exist_ok=True)
     return p_dir
 
