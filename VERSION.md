@@ -15,6 +15,7 @@
   - 样式合并：项目下拉框样式移到 `web/clip_bin_picker.css`（`.minimax-clip-bin-project`），删掉 `web/long_builder.css` 里的 `.h3-lb-project`；新增 `.minimax-clip-bin-new*`（内联新建行）与 `.minimax-clip-bin-danger*`（内联删除确认行）。
   - Long Builder 面板改请求 `?videos_only=1`，可见行为不变。
   - 测试 112 → 125：`tests/test_projects_api.py` 抽出 `BinFixture`，新增 `TestProjectCreation`（新建、同名幂等、名字清洗、空名/超长名拒绝）、`TestProjectDeletion`（删整库、连带删视频、`confirm` 不匹配报错、已不存在返回 `deleted: False`、清洗名对齐）与全量列表计数用例。
+- 运行时验证：已把 6 个运行时文件覆盖到 `E:\ai\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-H3-ClipStream\` 并逐文件哈希核对（开发副本全部运行时文件无差异）。用户实测确认项目选单、新建项目与删除整个项目均正常 → **`v0.7.4` 运行时验证通过**，不需要回退。
 
 ## 2026-10-03 · `fffdee0`（上一基线）
 
@@ -58,7 +59,7 @@
 | `v0.7.1` | `2ec770a` | 版本铁规落地 + `tests/` 测试套件 |
 | `v0.7.2` | `fffdee0` | 长视频拼接节点 `MiniMaxClipBinLongBuilder`（第 11 个节点） |
 | `v0.7.3` | `5c7330d` | Long Builder 面板化 + 按镜头序号定序（去掉血缘回溯、多余输入与输出接口）。运行时已验证：用户覆盖运行副本后确认面板、`/minimax/clip_bin/projects` 与节点内联预览正常（单元 112 用例 + 真 ffmpeg/ffprobe 冒烟亦通过） |
-| `v0.7.4` | 本提交 | Clip Bin Picker 项目选单 + 选单内新建/删除项目（`create_project`、`delete_project`、`POST /minimax/clip_bin/project[/delete]`、`?videos_only=1`） |
+| `v0.7.4` | `2b46aa2` | Clip Bin Picker 项目选单 + 选单内新建/删除项目（`create_project`、`delete_project`、`POST /minimax/clip_bin/project[/delete]`、`?videos_only=1`） |
 
 打 tag 与校验：
 
