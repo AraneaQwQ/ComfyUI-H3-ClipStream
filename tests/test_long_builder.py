@@ -39,63 +39,105 @@ def probe(width=1280, height=720, fps=24.0, frames=124, duration=5.166,
 
 
 class TestShotOrder(unittest.TestCase):
-    """The bin is indexed newest first; the join order is the reverse of the lineage."""
+    """The timeline is the shot number on the card, not the lineage between cards.
+
+    The bin index is newest first, so every case here feeds the cards in reverse on
+    purpose: the order the builder produces must come from the shot numbers.
+    """
 
     def setUp(self):
         self.cards = [
-            card("clip_c3", "Shot 3", parent="clip_c2"),
-            card("clip_c2", "Shot 2", parent="clip_c1"),
-            card("clip_c1", "Shot 1", parent=""),
+            card("clip_c3", "Shot 3", parent="clip_c2", created_at="2026-10-02 10:03:00"),
+            card("clip_c1", "Shot 1", parent="", created_at="2026-10-02 10:01:00"),
+            card("clip_c2", "Shot 2", parent="clip_c1", created_at="2026-10-02 10:02:00"),
         ]
 
-    def test_lineage_is_walked_backwards_then_reversed(self):
+    def test_cards_are_ordered_by_shot_number(self):
         order, warnings = lb.resolve_shot_order(self.cards)
         self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
         self.assertEqual(warnings, [])
 
-    def test_initial_marker_ends_the_chain(self):
-        self.cards[1]["parent_clip_id"] = "[INITIAL]"
-        order, warnings = lb.resolve_shot_order(self.cards)
-        self.assertEqual(order, ["clip_c2", "clip_c3"])
+    def test_shot_12_comes_after_shot_2(self):
+        self.cards.insert(0, card("clip_c12", "Shot 12", parent="clip_c3"))
+        order, _ = lb.resolve_shot_order(self.cards)
+        self.assertEqual(order[-2:], ["clip_c3", "clip_c12"])
+
+    def test_a_project_that_starts_at_shot_4_still_joins(self):
+        cards = [card("clip_c5", "Shot 5"), card("clip_c4", "Shot 4")]
+        order, warnings = lb.resolve_shot_order(cards)
+        self.assertEqual(order, ["clip_c4", "clip_c5"])
         self.assertEqual(warnings, [])
 
-    def test_start_clip_limits_the_chain(self):
-        order, warnings = lb.resolve_shot_order(self.cards, start_ref="clip_c2")
-        self.assertEqual(order, ["clip_c2", "clip_c3"])
-
-    def test_end_clip_can_be_named_by_shot_tag(self):
-        order, _ = lb.resolve_shot_order(self.cards, end_ref="Shot 2")
-        self.assertEqual(order, ["clip_c1", "clip_c2"])
-
-    def test_deleted_parent_warns_and_truncates(self):
-        self.cards[1]["parent_clip_id"] = "clip_gone"
+    def test_lineage_does_not_move_a_card(self):
+        # A branch or a bad parent id changes which card continued from which; it does
+        # not change when the finished film plays each shot.
+        for entry in self.cards:
+            entry["parent_clip_id"] = "clip_c3"
         order, warnings = lb.resolve_shot_order(self.cards)
+        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
+        self.assertEqual(warnings, [])
+
+    def test_a_card_switched_off_in_the_panel_is_left_out(self):
+        order, warnings = lb.resolve_shot_order(self.cards, exclude_text="clip_c2")
+        self.assertEqual(order, ["clip_c1", "clip_c3"])
+        self.assertEqual(warnings, [])
+
+    def test_exclusion_also_accepts_a_shot_tag(self):
+        order, _ = lb.resolve_shot_order(self.cards, exclude_text="Shot 1")
         self.assertEqual(order, ["clip_c2", "clip_c3"])
-        self.assertEqual(len(warnings), 1)
+
+    def test_excluding_a_card_that_is_not_in_the_bin_is_reported_not_fatal(self):
+        order, warnings = lb.resolve_shot_order(self.cards, exclude_text="clip_gone")
+        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
         self.assertIn("clip_gone", warnings[0])
 
-    def test_cycle_in_lineage_is_broken_with_a_warning(self):
-        self.cards[2]["parent_clip_id"] = "clip_c3"
-        order, warnings = lb.resolve_shot_order(self.cards)
-        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
-        self.assertTrue(any("循环" in w for w in warnings))
+    def test_unnumbered_tags_follow_the_numbered_ones_in_generation_order(self):
+        self.cards.append(card("clip_x", "补拍空镜", created_at="2026-10-02 09:00:00"))
+        self.cards.append(card("clip_y", "男主回眸", created_at="2026-10-02 11:00:00"))
+        order, _ = lb.resolve_shot_order(self.cards)
+        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3", "clip_x", "clip_y"])
 
-    def test_hand_written_sequence_wins_over_lineage(self):
-        order, warnings = lb.resolve_shot_order(
-            self.cards, sequence_text="clip_c1, Shot 3\nclip_c2")
-        self.assertEqual(order, ["clip_c1", "clip_c3", "clip_c2"])
-        self.assertEqual(warnings, [])
-
-    def test_unknown_reference_in_a_sequence_is_reported_not_fatal(self):
-        order, warnings = lb.resolve_shot_order(self.cards, sequence_text="clip_c1,clip_missing")
-        self.assertEqual(order, ["clip_c1"])
-        self.assertIn("clip_missing", warnings[0])
+    def test_the_same_shot_number_falls_back_to_creation_time(self):
+        self.cards.append(card("clip_c2b", "Shot 2", created_at="2026-10-02 09:30:00"))
+        order, _ = lb.resolve_shot_order(self.cards)
+        self.assertEqual(order, ["clip_c1", "clip_c2b", "clip_c2", "clip_c3"])
 
     def test_empty_bin_says_so(self):
         order, warnings = lb.resolve_shot_order([])
         self.assertEqual(order, [])
         self.assertTrue(warnings)
 
+    def test_switching_off_every_card_leaves_nothing(self):
+        order, warnings = lb.resolve_shot_order(self.cards,
+                                                exclude_text="Shot 1, Shot 2, Shot 3")
+        self.assertEqual(order, [])
+        self.assertTrue(any("全被排除" in w for w in warnings))
+
+    def test_shot_number_reads_the_first_number_of_a_tag(self):
+        self.assertEqual(lb.shot_number("Shot 12"), 12)
+        self.assertEqual(lb.shot_number("第 3 镜 男主回眸"), 3)
+        self.assertIsNone(lb.shot_number("远景空镜"))
+        self.assertIsNone(lb.shot_number(None))
+
+
+class TestNumberingGaps(unittest.TestCase):
+    """A deleted take leaves a hole in the shot numbers; the panel and the log say so."""
+
+    def test_a_deleted_take_is_named(self):
+        warnings = lb.numbering_gaps([card("clip_a", "Shot 1"), card("clip_c", "Shot 3")])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Shot 2", warnings[0])
+
+    def test_contiguous_numbers_are_silent(self):
+        self.assertEqual(lb.numbering_gaps([card("clip_a", "Shot 1"), card("clip_b", "Shot 2")]),
+                         [])
+
+    def test_one_card_is_never_a_gap(self):
+        self.assertEqual(lb.numbering_gaps([card("clip_a", "Shot 7")]), [])
+
+    def test_tags_without_numbers_are_not_counted(self):
+        self.assertEqual(lb.numbering_gaps([card("clip_a", "空镜"), card("clip_b", "补拍")]),
+                         [])
 
 class TestVariantChoice(unittest.TestCase):
     def test_second_pass_is_preferred_when_it_has_a_video(self):
@@ -300,15 +342,40 @@ class BuildTestCase(unittest.TestCase):
             lb.build_long_video("Proj", join_mode=lb.JOIN_COPY)
         self.assertIn("帧率", str(caught.exception))
 
-    def test_missing_video_is_fatal_unless_skipping_is_allowed(self):
+    def test_a_card_without_archived_video_is_skipped_and_named(self):
         self.add_card("Proj", "clip_a", "Shot 1", "")
         self.add_card("Proj", "clip_b", "Shot 2", "clip_a", video=None)
-        with self.assertRaises(ValueError) as caught:
-            lb.build_long_video("Proj")
-        self.assertIn("Shot 2", str(caught.exception))
-        result = lb.build_long_video("Proj", skip_missing=True)
+        result = lb.build_long_video("Proj")
         self.assertEqual(len(result["segments"]), 1)
-        self.assertTrue(any("跳过" in w for w in result["warnings"]))
+        self.assertTrue(any("Shot 2" in w and "跳过" in w for w in result["warnings"]))
+
+    def test_a_card_switched_off_in_the_panel_is_not_joined(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        self.add_card("Proj", "clip_b", "Shot 2", "clip_a")
+        self.add_card("Proj", "clip_c", "Shot 3", "clip_b")
+        result = lb.build_long_video("Proj", exclude_clips="clip_b")
+        self.assertEqual(len(self.calls[0]["paths"]), 2)
+        self.assertFalse(any("clip_b" in path for path in self.calls[0]["paths"]))
+        self.assertEqual([s["clip_id"] for s in result["segments"]], ["clip_a", "clip_c"])
+        # Leaving a take out on purpose is not a hole in the shot numbers.
+        self.assertFalse(any("库里没有" in w for w in result["warnings"]))
+
+    def test_a_deleted_take_leaves_a_warning_about_the_numbering(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        self.add_card("Proj", "clip_c", "Shot 3", "clip_a")
+        result = lb.build_long_video("Proj")
+        self.assertEqual(len(result["segments"]), 2)
+        self.assertTrue(any("库里没有 Shot 2" in w for w in result["warnings"]))
+
+    def test_the_result_is_addressable_by_the_inline_preview(self):
+        # ui.PreviewVideo needs filename + subfolder under ComfyUI's output folder,
+        # which is what replaced the filename/total_frames/duration sockets.
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        result = lb.build_long_video("Proj")
+        self.assertEqual(result["subfolder"].replace("\\", "/"), "h3_long/Proj")
+        self.assertTrue(result["filename"].endswith(".mp4"))
+        self.assertEqual(os.path.join(self.out, result["subfolder"].replace("/", os.sep),
+                                      result["filename"]), result["path"])
 
     def test_untrimmed_middle_segment_is_reported_in_the_report(self):
         self.add_card("Proj", "clip_a", "Shot 1", "")

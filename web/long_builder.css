@@ -1,0 +1,88 @@
+/* MiniMax H3 Clip Long Builder panel.
+   Cards, deck and container come from clip_bin_picker.css; this file only adds the
+   project dropdown, the summary line and the two card states this node needs. */
+
+.h3-lb-title {
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.h3-lb-project {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: #1e293b;
+    border: 1px solid #475569;
+    color: #e2e8f0;
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 2px 4px;
+}
+
+.h3-lb-project:focus {
+    outline: none;
+    border-color: #60a5fa;
+}
+
+/* What will actually be joined, in plain words. */
+.h3-lb-summary {
+    font-size: 11px;
+    line-height: 1.5;
+    color: #cbd5e1;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 4px 6px;
+    margin-bottom: 8px;
+}
+
+.h3-lb-summary div:first-child {
+    color: #93c5fd;
+}
+
+.h3-lb-deck {
+    max-height: 420px;
+}
+
+.h3-lb-empty {
+    padding: 12px 6px;
+    color: #64748b;
+    font-size: 11px;
+}
+
+/* Switched off in the panel: still visible, clearly not in the film. */
+.h3-lb-off {
+    opacity: 0.45;
+    filter: grayscale(0.9);
+    border-style: dashed;
+}
+
+.h3-lb-off:hover {
+    opacity: 0.75;
+}
+
+/* No archived video: cannot be part of the film, so it is not clickable. */
+.h3-lb-no-video {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.h3-lb-no-video:hover {
+    transform: none;
+    border-color: #2d3748;
+    box-shadow: none;
+}
+
+.h3-lb-badge-off {
+    background: #7f1d1d;
+    color: #fecaca;
+}
+
+.h3-lb-footer {
+    border-top: 1px solid #3a3a3a;
+    padding-top: 6px;
+    margin-top: 4px;
+    font-size: 10px;
+    color: #94a3b8;
+    font-family: monospace;
+    word-break: break-all;
+}

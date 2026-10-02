@@ -8,6 +8,9 @@ them with ffmpeg.
 
 Two rules keep the result honest:
 
+* The timeline is the shot number the Saver wrote into each card. Lineage
+  (``parent_clip_id``) says which card a generation continued from, which is not
+  the same as the order the finished film plays in, so it is not used here.
 * ``meta.frames`` is a latent-domain number (see
   ``_shared.latent_steps_to_pixel_frames``) and is only used here to detect an
   untrimmed seam. Every number that reaches the output file is measured from the
@@ -39,8 +42,7 @@ logger = logging.getLogger("minimax_clip_bin_long")
 # index rebuild and the gallery can never mistake them for a card.
 LONG_DIR_NAME = "h3_long"
 
-MAX_CHAIN = 200
-INITIAL_MARKERS = ("[INITIAL]", "[INITIAL_GENERATION]")
+SHOT_NUMBER_RE = re.compile(r"(\d+)")
 
 VARIANT_PREFER_UP = "优先二采（无则退回一采）"
 VARIANT_ONLY_FIRST = "仅一采"
@@ -93,76 +95,80 @@ def parse_sequence(text: str) -> List[str]:
     return [part.strip() for part in re.split(r"[,\n;]+", str(text or "")) if part.strip()]
 
 
-def resolve_shot_order(clips: List[Dict[str, Any]],
-                       end_ref: str = "latest",
-                       start_ref: str = "",
-                       sequence_text: str = "") -> Tuple[List[str], List[str]]:
-    """Works out which cards to join, oldest first.
+def shot_number(shot_tag: Any) -> Optional[int]:
+    """Returns the first number in a shot tag, or None when the tag carries none.
 
-    Default is a lineage walk: start at the newest card (or at ``end_ref``) and
-    follow ``parent_clip_id`` backwards until ``start_ref``, a card with no parent,
-    or a broken link. A hand-written ``sequence_text`` replaces the walk entirely,
-    which is what a branched project needs - lineage alone cannot say which
-    branch the user wants.
+    The Saver numbers a project Shot 1, Shot 2, ... in the order the film was
+    generated, so that number is the timeline. It is read as an integer because
+    "Shot 12" has to come after "Shot 2", not between Shot 1 and Shot 2.
+    """
+    match = SHOT_NUMBER_RE.search(str(shot_tag or ""))
+    return int(match.group(1)) if match else None
+
+
+def shot_sort_key(clip: Dict[str, Any]) -> Tuple[int, int, str, str]:
+    """Sorts cards the way the film was made: shot number first, then creation time.
+
+    A hand-written tag with no number keeps generation order and sorts after the
+    numbered cards, so a mixed bin still reads top to bottom.
+    """
+    created_at = str(clip.get("created_at") or "")
+    clip_id = str(clip.get("clip_id") or "")
+    number = shot_number(clip.get("shot_tag"))
+    if number is None:
+        return (1, 0, created_at, clip_id)
+    return (0, number, created_at, clip_id)
+
+
+def resolve_shot_order(clips: List[Dict[str, Any]],
+                       exclude_text: str = "") -> Tuple[List[str], List[str]]:
+    """Works out which cards to join: the whole bin, smallest shot number first.
+
+    The bin is filled one shot at a time, so the default film is every card in the
+    bin ordered by its shot number - it starts at Shot 4 when the earlier takes were
+    deleted. ``exclude_text`` lists the cards switched off in the panel (a clip_id or
+    part of a shot tag), which is how a rejected take or a branch is left out.
+    Lineage is not used: it records which card a generation continued from, not the
+    order the finished film plays in.
 
     Returns (clip_ids in join order, warnings).
     """
     warnings: List[str] = []
-
-    if sequence_text and sequence_text.strip():
-        ordered = []
-        for ref in parse_sequence(sequence_text):
-            clip = find_clip(clips, ref)
-            if clip is None:
-                warnings.append("库里找不到镜头「%s」，已跳过" % ref)
-                continue
-            ordered.append(clip["clip_id"])
-        return ordered, warnings
-
     if not clips:
         return [], ["项目库是空的，没有可拼接的镜头"]
 
-    if str(end_ref or "").strip().lower() in ("", "latest", "auto", "default"):
-        current = clips[0]
-    else:
-        current = find_clip(clips, end_ref)
-        if current is None:
-            return [], ["终点镜头「%s」在库里找不到" % end_ref]
-
-    start_id = None
-    if str(start_ref or "").strip():
-        start_clip = find_clip(clips, start_ref)
-        if start_clip is None:
-            warnings.append("起点镜头「%s」在库里找不到，改为一直回溯到血缘根部" % start_ref)
+    excluded = set()
+    for ref in parse_sequence(exclude_text):
+        clip = find_clip(clips, ref)
+        if clip is None:
+            warnings.append("要排除的镜头「%s」在库里找不到（可能已删除）" % ref)
         else:
-            start_id = start_clip["clip_id"]
+            excluded.add(clip["clip_id"])
 
-    chain: List[str] = []
-    seen = set()
-    while current is not None:
-        clip_id = current["clip_id"]
-        if clip_id in seen:
-            warnings.append("血缘在「%s」处形成循环，已停止回溯" % clip_id)
-            break
-        seen.add(clip_id)
-        chain.append(clip_id)
-        if start_id and clip_id == start_id:
-            break
+    ordered = [clip["clip_id"] for clip in sorted(clips, key=shot_sort_key)
+               if clip["clip_id"] not in excluded]
+    if not ordered:
+        return [], warnings + ["库里的镜头全被排除了，没有可拼接的片段"]
+    return ordered, warnings
 
-        parent = str(current.get("parent_clip_id") or "").strip()
-        if not parent or parent in INITIAL_MARKERS:
-            break
-        current = find_clip(clips, parent)
-        if current is None:
-            warnings.append("「%s」的父镜头「%s」不在库里（可能已删除），血缘在此断开" % (clip_id, parent))
-            break
-        if len(chain) >= MAX_CHAIN:
-            warnings.append("血缘长度超过 %d 段，已在此停止回溯" % MAX_CHAIN)
-            break
 
-    chain.reverse()
-    return chain, warnings
+def numbering_gaps(clips: List[Dict[str, Any]]) -> List[str]:
+    """Names the shot numbers missing from the bin between its first and last card.
 
+    A hole means a take was deleted, so the film jumps without saying so. Excluding
+    a card in the panel is not a hole - the caller passes the bin, not the join list.
+    """
+    numbers = [shot_number(clip.get("shot_tag")) for clip in clips]
+    numbers = [number for number in numbers if number is not None]
+    if len(numbers) < 2:
+        return []
+    present = set(numbers)
+    missing = [number for number in range(min(numbers), max(numbers) + 1)
+               if number not in present]
+    if not missing:
+        return []
+    return ["库里没有 Shot %s 这段卡片，成片会直接从相邻镜头接过去" %
+            "、Shot ".join(str(number) for number in missing)]
 
 def pick_variant(meta: Dict[str, Any], policy: str) -> Tuple[str, str, Dict[str, Any]]:
     """Chooses which archived video to use for one card.
@@ -367,24 +373,22 @@ def concat_videos(paths: List[str], output_path: str, mode: str,
 
 
 def build_long_video(project_name: str,
-                     end_clip_id: str = "latest",
-                     start_clip_id: str = "",
-                     clip_sequence: str = "",
+                     exclude_clips: str = "",
                      variant_policy: str = VARIANT_PREFER_UP,
                      join_mode: str = JOIN_AUTO,
                      fps: float = 24.0,
-                     skip_missing: bool = False,
                      output_name: str = "") -> Dict[str, Any]:
-    """Joins the archived videos of one project's shot chain into a single MP4.
+    """Joins a project's archived videos into one MP4, smallest shot number first.
 
-    Returns a dict with path, total_frames, duration_seconds, segments, warnings,
-    join_method and a human-readable report.
+    Returns a dict with path, filename, subfolder, total_frames, duration_seconds,
+    segments, warnings, join_method and a human-readable report.
     """
     p_name = (project_name or "Default_Project").strip()
     clips = list_bin_clips(p_name)
-    chain, warnings = resolve_shot_order(clips, end_clip_id, start_clip_id, clip_sequence)
+    chain, warnings = resolve_shot_order(clips, exclude_clips)
     if not chain:
         raise ValueError("h3_clipstream: 项目「%s」里没有可拼接的镜头。%s" % (p_name, " ".join(warnings)))
+    warnings.extend(numbering_gaps(clips))
 
     project_dir = get_project_dir(p_name)
     segments: List[Dict[str, Any]] = []
@@ -411,14 +415,11 @@ def build_long_video(project_name: str,
         })
 
     if missing:
-        message = "以下镜头没有归档视频：" + "、".join(missing)
-        if not skip_missing:
-            raise ValueError("h3_clipstream: " + message +
-                             "。要么在 Saver 里打开 save_video 重新归档这些段，要么打开本节点的 skip_missing。")
-        warnings.append(message + "（skip_missing 已开启，这些段被跳过）")
+        warnings.append("以下镜头没有归档视频，已跳过（在 Saver 里打开 save_video 才能归档）："
+                        + "、".join(missing))
 
     if not segments:
-        raise ValueError("h3_clipstream: 项目「%s」的镜头链里没有一段带归档视频。" % p_name)
+        raise ValueError("h3_clipstream: 项目「%s」里没有任何一段带归档视频，拼不出成片。" % p_name)
 
     warnings.extend(seam_warnings(segments))
 
@@ -439,7 +440,9 @@ def build_long_video(project_name: str,
         name = "%s_%02dshots_%s.mp4" % (slug, len(segments), datetime.now().strftime("%Y%m%d_%H%M%S"))
     if not name.lower().endswith(".mp4"):
         name += ".mp4"
-    out_path = os.path.join(get_long_dir(p_name), name)
+    long_dir = get_long_dir(p_name)
+    out_path = os.path.join(long_dir, name)
+    subfolder = os.path.relpath(long_dir, get_output_root()).replace(os.sep, "/")
 
     join_method, _stderr = concat_videos(
         [segment["video_path"] for segment in segments], out_path, mode,
@@ -457,6 +460,8 @@ def build_long_video(project_name: str,
                 p_name, out_path, total_frames, duration, join_method)
     return {
         "path": out_path,
+        "filename": name,
+        "subfolder": subfolder,
         "total_frames": total_frames,
         "duration_seconds": round(duration, 3),
         "segments": segments,

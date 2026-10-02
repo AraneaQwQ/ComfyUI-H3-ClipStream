@@ -177,6 +177,47 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
     }
 
 
+def _card_has_video(project_dir: str, clip_id: str, entry: Dict[str, Any]) -> bool:
+    """Checks whether a card really has an archived video file on disk.
+
+    Mirrors the list endpoint's lookup without its self-healing copy: the project
+    picker only has to decide whether a bin is worth offering at all.
+    """
+    clip_dir = os.path.join(project_dir, str(clip_id))
+    candidates = [str(entry.get("video_file") or "")]
+    variants = entry.get("variants")
+    if isinstance(variants, dict):
+        for variant in variants.values():
+            if isinstance(variant, dict):
+                candidates.append(str(variant.get("video_file") or ""))
+    for name in candidates:
+        if name and any(name.lower().endswith(e) for e in VIDEO_EXTENSIONS) \
+                and os.path.isfile(os.path.join(clip_dir, name)):
+            return True
+    if os.path.isdir(clip_dir):
+        for file_name in os.listdir(clip_dir):
+            if any(file_name.lower().endswith(e) for e in VIDEO_EXTENSIONS):
+                return True
+    return False
+
+
+def list_video_projects_api() -> Dict[str, Any]:
+    """Lists the bins that hold at least one archived video, with their card counts.
+
+    The Long Builder panel offers these in a dropdown instead of asking for a project
+    name to be typed by hand; a bin with no archived video can never become a film.
+    """
+    projects = []
+    for name in list_projects():
+        index = load_project_index(name)
+        cards = [c for c in index.get("clips", []) if isinstance(c, dict) and c.get("clip_id")]
+        project_dir = get_project_dir(name)
+        videos = sum(1 for c in cards
+                     if _card_has_video(project_dir, c.get("clip_id"), c))
+        if videos:
+            projects.append({"name": name, "clips": len(cards), "videos": videos})
+    return {"projects": projects}
+
 def register_clip_bin_routes() -> None:
     """Registers API routes into ComfyUI's PromptServer if running inside ComfyUI."""
     try:
@@ -199,6 +240,11 @@ def register_clip_bin_routes() -> None:
         data = await asyncio.to_thread(get_project_clips_api, project)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
 
+
+    @routes.get("/minimax/clip_bin/projects")
+    async def handle_projects(request):
+        data = await asyncio.to_thread(list_video_projects_api)
+        return web.json_response(data, headers={"Cache-Control": "no-store"})
 
     @routes.post("/minimax/clip_bin/delete")
     async def handle_delete(request):

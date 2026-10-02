@@ -31,7 +31,7 @@ EXPECTED_OUTPUTS = {
     "MiniMaxClipBinPicker": ["latent", "tail_frame", "first_frame", "prompt", "clip_id", "project_name"],
     "MiniMaxClipBinDualSaver": ["clip_id", "preview_image", "project_name"],
     "MiniMaxClipBinDualPicker": ["latent_一采", "latent_二采", "first_frame", "tail_frame", "clip_id", "project_name", "prompt"],
-    "MiniMaxClipBinLongBuilder": ["filename", "total_frames", "duration_seconds", "report"],
+    "MiniMaxClipBinLongBuilder": ["video"],
     "MiniMaxH3MotionContextClipStream": ["conditioning", "trim_frames"],
     "MiniMaxH3MotionContextTrimClipStream": ["images", "audio"],
     "MiniMaxH3MotionContextSaveLatentClipStream": ["latent_path"],
@@ -56,9 +56,9 @@ EXPECTED_INPUTS = {
                                 ("video_file_二采", True), ("save_video", True)],
     "MiniMaxClipBinDualPicker": [("project_name", False), ("mode", False),
                                  ("clip_selection", False), ("custom_clip_path", True)],
-    "MiniMaxClipBinLongBuilder": [("project_name", False), ("end_clip_id", False), ("start_clip_id", True),
-                                      ("clip_sequence", True), ("variant_policy", False), ("join_mode", False),
-                                      ("fps", True), ("skip_missing", True), ("output_name", True)],
+    "MiniMaxClipBinLongBuilder": [("project_name", False), ("exclude_clips", True),
+                                      ("variant_policy", False), ("join_mode", False),
+                                      ("fps", True), ("output_name", True)],
     "MiniMaxH3MotionContextClipStream": [("conditioning", False), ("vae", False), ("latent", False),
                                          ("context_length", False), ("audio_context_length", False),
                                          ("context_frames", True), ("context_latent", True),
@@ -143,6 +143,37 @@ class TestNodeInterfaces(unittest.TestCase):
         self.assertEqual(list(single.options), PICKER_MODES)
         dual = _schemas()["MiniMaxClipBinDualPicker"].inputs[1]
         self.assertEqual(list(dual.options), DUAL_PICKER_MODES)
+
+    def test_long_builder_exposes_nothing_but_the_panel_inputs(self):
+        # The card panel writes project_name and exclude_clips; every other widget is
+        # hidden behind the advanced toggle on purpose, and the node has one VIDEO
+        # output so there is no socket to guess at.
+        schema = _schemas()["MiniMaxClipBinLongBuilder"]
+        for item in schema.inputs:
+            self.assertTrue(item.advanced, item.id)
+        self.assertEqual([out.display_name for out in schema.outputs], ["video"])
+
+    def test_long_builder_hands_back_a_video_and_an_inline_preview(self):
+        # There is one output on purpose: the film is played on the node itself, and
+        # the same value can be wired into SaveVideo. The audit text is logged instead.
+        nodes = _module("clipbin.long_nodes")
+        real = nodes.build_long_video
+        try:
+            nodes.build_long_video = lambda **kwargs: {
+                "path": os.path.join("out", "movie.mp4"), "filename": "movie.mp4",
+                "subfolder": "h3_long/Proj", "total_frames": 10, "duration_seconds": 1.0,
+                "segments": [], "warnings": ["接缝未裁"], "join_method": "copy", "report": "报告",
+            }
+            out = nodes.MiniMaxClipBinLongBuilderNode.execute(project_name="Proj")
+        finally:
+            nodes.build_long_video = real
+        self.assertEqual(type(out.args[0]).__name__, "VideoFromFile")
+        self.assertEqual(out.args[0].get_stream_source(), os.path.join("out", "movie.mp4"))
+        preview = out.ui.as_dict()
+        self.assertEqual(preview["animated"], (True,))
+        self.assertEqual(preview["images"][0]["filename"], "movie.mp4")
+        self.assertEqual(preview["images"][0]["subfolder"], "h3_long/Proj")
+        self.assertEqual(preview["images"][0]["type"], "output")
 
     def test_graph_terminal_nodes_are_marked_as_output_nodes(self):
         schemas = _schemas()
