@@ -92,7 +92,15 @@ function setupClipBinPickerWidget(node) {
 
     const titleWrap = document.createElement("div");
     titleWrap.className = "minimax-clip-bin-title";
-    titleWrap.innerHTML = `🎞️ MiniMax Project Clip Bin: <span class="minimax-clip-bin-project-tag">${projectWidget?.value || "Default_Project"}</span>`;
+    const titleText = document.createElement("span");
+    titleText.textContent = "🎞️ MiniMax Project Clip Bin:";
+    // The bin is picked from the folders that actually exist, and the first entry in
+    // the menu starts a new one, so no name ever has to be typed from memory.
+    const projectSelect = document.createElement("select");
+    projectSelect.className = "minimax-clip-bin-project";
+    projectSelect.title = "选择素材库，或新建一个";
+    titleWrap.appendChild(titleText);
+    titleWrap.appendChild(projectSelect);
 
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "minimax-clip-bin-actions";
@@ -122,6 +130,46 @@ function setupClipBinPickerWidget(node) {
     header.appendChild(actionsWrap);
     container.appendChild(header);
 
+    const createRow = document.createElement("div");
+    createRow.className = "minimax-clip-bin-new";
+    createRow.hidden = true;
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "minimax-clip-bin-new-input";
+    nameInput.placeholder = "新项目名（例如：科幻短片 01）";
+    const createBtn = document.createElement("button");
+    createBtn.className = "minimax-clip-bin-refresh-btn";
+    createBtn.textContent = "✔ 建立";
+    const cancelCreateBtn = document.createElement("button");
+    cancelCreateBtn.className = "minimax-clip-bin-refresh-btn";
+    cancelCreateBtn.textContent = "✕ 取消";
+    const createError = document.createElement("span");
+    createError.className = "minimax-clip-bin-new-error";
+    createRow.appendChild(nameInput);
+    createRow.appendChild(createBtn);
+    createRow.appendChild(cancelCreateBtn);
+    createRow.appendChild(createError);
+    container.appendChild(createRow);
+
+    // Deleting a bin is the mirror of creating one, so it lives in the same menu. It
+    // takes the whole story with it, so the confirm button repeats the name.
+    const deleteRow = document.createElement("div");
+    deleteRow.className = "minimax-clip-bin-new minimax-clip-bin-danger";
+    deleteRow.hidden = true;
+    const deleteText = document.createElement("span");
+    deleteText.className = "minimax-clip-bin-danger-text";
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "minimax-clip-bin-danger-btn";
+    const cancelDeleteBtn = document.createElement("button");
+    cancelDeleteBtn.className = "minimax-clip-bin-refresh-btn";
+    cancelDeleteBtn.textContent = "✕ 取消";
+    const deleteError = document.createElement("span");
+    deleteError.className = "minimax-clip-bin-new-error";
+    deleteRow.appendChild(deleteText);
+    deleteRow.appendChild(deleteBtn);
+    deleteRow.appendChild(cancelDeleteBtn);
+    deleteRow.appendChild(deleteError);
+    container.appendChild(deleteRow);
     // --- Card Zoom State ---
     const ZOOM_STEPS = [1, 1.5, 2, 3, 4]; // 100%, 150%, 200%, 300%, 400%
     let zoomIdx = 0;
@@ -319,10 +367,53 @@ function setupClipBinPickerWidget(node) {
         previewCleanups.clear();
     }
     signal.addEventListener("abort", releasePreviews, { once: true });
+    // The menu lists every bin on disk with how much it holds; an empty bin is still
+    // a valid place to save the next shot.
+    const NEW_PROJECT = "__new__";
+    const DELETE_PROJECT = "__delete__";
+    let projectBins = [];
+
+    async function loadProjects() {
+        let bins = [];
+        try {
+            const res = await api.fetchApi("/minimax/clip_bin/projects", { cache: "no-store" });
+            if (res.ok) {
+                bins = (await res.json()).projects || [];
+            }
+        } catch (e) {
+            console.warn("[Clip Bin] projects lookup failed:", e);
+        }
+        if (signal.aborted) return;
+        const active = projectWidget?.value || "Default_Project";
+        if (!bins.some(bin => bin.name === active)) {
+            bins.unshift({ name: active, clips: 0, videos: 0 });
+        }
+        projectSelect.innerHTML = "";
+        const newOption = document.createElement("option");
+        newOption.value = NEW_PROJECT;
+        newOption.textContent = "＋ 新建项目…";
+        projectSelect.appendChild(newOption);
+        for (const bin of bins) {
+            const option = document.createElement("option");
+            option.value = bin.name;
+            option.textContent = bin.clips ? `${bin.name} (${bin.clips} 卡)` : `${bin.name}（空）`;
+            if (bin.name === active) option.selected = true;
+            projectSelect.appendChild(option);
+        }
+        const deleteOption = document.createElement("option");
+        deleteOption.value = DELETE_PROJECT;
+        deleteOption.textContent = "🗑 删除当前项目…";
+        projectSelect.appendChild(deleteOption);
+        // Keep the counts so the confirm step can say what is about to be lost.
+        projectBins = bins;
+    }
+
     let requestId = 0;
     async function loadClips(deletedId = null) {
         if (signal.aborted) return;
         const currentRequest = ++requestId;
+        await loadProjects();
+        if (signal.aborted || currentRequest !== requestId) return;
         const currentProject = projectWidget?.value || "Default_Project";
         if (deletedId != null && selectionWidget?.value === deletedId) {
             selectionWidget.value = "latest";
@@ -330,7 +421,6 @@ function setupClipBinPickerWidget(node) {
         }
         const currentSelection = (selectionWidget?.value || "latest").trim();
         updateSelectionDisplay(currentSelection);
-        titleWrap.innerHTML = `🎞️ MiniMax Project Clip Bin: <span class="minimax-clip-bin-project-tag">${currentProject}</span>`;
 
         try {
             const res = await api.fetchApi(`/minimax/clip_bin/list?project=${encodeURIComponent(currentProject)}`, { cache: "no-store" });
@@ -576,6 +666,148 @@ function setupClipBinPickerWidget(node) {
     refreshBtn.onclick = (e) => {
         e.stopPropagation();
         loadClips();
+    };
+
+    // Switching bins goes through the widget so the graph and the deck stay in step.
+    function setProject(name) {
+        closeCreateRow();
+        closeDeleteRow();
+        if (!projectWidget) {
+            loadClips();
+            return;
+        }
+        projectWidget.value = name;
+        projectWidget.callback?.(name);
+        node.setDirtyCanvas?.(true, true);
+    }
+
+    function openCreateRow() {
+        createRow.hidden = false;
+        createError.textContent = "";
+        nameInput.focus();
+    }
+
+    function closeCreateRow() {
+        createRow.hidden = true;
+        nameInput.value = "";
+        createError.textContent = "";
+    }
+
+    async function createProject() {
+        const typed = nameInput.value.trim();
+        if (!typed) {
+            createError.textContent = "先写个名字。";
+            nameInput.focus();
+            return;
+        }
+        createBtn.disabled = true;
+        createError.textContent = "";
+        try {
+            const res = await api.fetchApi("/minimax/clip_bin/project", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ project: typed }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                createError.textContent = data.error || `建立失败（HTTP ${res.status}）`;
+                return;
+            }
+            closeCreateRow();
+            setProject(data.name || typed);
+        } catch (e) {
+            console.warn("[Clip Bin] create project failed:", e);
+            createError.textContent = "建立失败：连不上后台服务。";
+        } finally {
+            createBtn.disabled = false;
+        }
+    }
+
+    projectSelect.onchange = () => {
+        const chosen = projectSelect.value;
+        if (chosen === NEW_PROJECT) {
+            projectSelect.value = projectWidget?.value || "Default_Project";
+            openCreateRow();
+            return;
+        }
+        if (chosen === DELETE_PROJECT) {
+            projectSelect.value = projectWidget?.value || "Default_Project";
+            openDeleteRow();
+            return;
+        }
+        if (chosen && chosen !== (projectWidget?.value || "")) setProject(chosen);
+    };
+    createBtn.onclick = (e) => {
+        e.stopPropagation();
+        createProject();
+    };
+    cancelCreateBtn.onclick = (e) => {
+        e.stopPropagation();
+        closeCreateRow();
+    };
+    nameInput.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") createProject();
+        if (e.key === "Escape") closeCreateRow();
+    };
+
+    function openDeleteRow() {
+        const name = projectWidget?.value || "Default_Project";
+        const bin = projectBins.find(item => item.name === name) || { clips: 0, videos: 0 };
+        deleteText.textContent = `删除「${name}」会同时删掉 ${bin.clips} 张卡片（含 ${bin.videos} 个已保存的视频文件），此操作不可撤销。`;
+        deleteBtn.textContent = `✔ 删除「${name}」`;
+        deleteRow.dataset.project = name;
+        deleteError.textContent = "";
+        deleteRow.hidden = false;
+    }
+
+    function closeDeleteRow() {
+        deleteRow.hidden = true;
+        deleteRow.dataset.project = "";
+        deleteError.textContent = "";
+    }
+
+    // The panel always needs somewhere to point, so after a delete it moves to the
+    // default bin when there is one, otherwise to whatever is left.
+    function nextProjectAfter(name) {
+        const remaining = projectBins.map(item => item.name).filter(item => item && item !== name);
+        if (remaining.includes("Default_Project")) return "Default_Project";
+        return remaining[0] || "Default_Project";
+    }
+
+    async function deleteProject() {
+        const name = deleteRow.dataset.project;
+        if (!name) return;
+        deleteBtn.disabled = true;
+        deleteError.textContent = "";
+        try {
+            const res = await api.fetchApi("/minimax/clip_bin/project/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ project: name, confirm: name }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                deleteError.textContent = data.error || `删除失败（HTTP ${res.status}）`;
+                return;
+            }
+            closeDeleteRow();
+            setProject(nextProjectAfter(name));
+        } catch (e) {
+            console.warn("[Clip Bin] delete project failed:", e);
+            deleteError.textContent = "删除失败：连不上后台服务。";
+        } finally {
+            deleteBtn.disabled = false;
+        }
+    }
+
+    deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        deleteProject();
+    };
+    cancelDeleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        closeDeleteRow();
     };
 
     // Watch projectWidget changes

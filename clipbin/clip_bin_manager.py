@@ -53,12 +53,23 @@ def project_locked(fn):
     def wrapped(*args, **kwargs):
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
-        key = os.path.normcase(os.path.realpath(get_project_dir(bound.arguments["project_name"])))
-        with _project_locks_guard:
-            lock = _project_locks.setdefault(key, threading.RLock())
-        with lock:
+        with _project_lock(bound.arguments["project_name"]):
             return fn(*args, **kwargs)
     return wrapped
+
+
+def _project_lock(project_name: str) -> threading.RLock:
+    """Returns the lock that serializes one project bin's read-modify-write work.
+
+    The key is built without creating the folder. Resolving it through
+    ``get_project_dir`` would leave an empty bin behind for every name that was only
+    ever looked at, and would make "does this bin already exist?" unanswerable for
+    create and delete.
+    """
+    key = os.path.normcase(os.path.realpath(
+        os.path.join(get_base_bin_dir(), sanitize_project_name(project_name))))
+    with _project_locks_guard:
+        return _project_locks.setdefault(key, threading.RLock())
 
 
 def atomic_write_json(path, data):
@@ -160,6 +171,67 @@ def list_projects() -> List[str]:
     if not projects:
         projects = ["Default_Project"]
     return projects
+
+
+MAX_PROJECT_NAME_LENGTH = 80
+
+
+def create_project(project_name: str) -> Dict[str, Any]:
+    """Creates an empty project bin, or confirms an existing one, and reports the name.
+
+    The Picker offers this so a new story starts in a folder chosen on purpose rather
+    than whatever name the first Saver happened to be left with. Creating is
+    idempotent - an existing name is selected, not duplicated - and the name returned
+    is the sanitized one the folder really uses, so the UI can never drift from disk.
+
+    Not decorated with ``project_locked``: that decorator resolves the project through
+    ``get_project_dir``, which creates the folder as a side effect, and then "did this
+    name already exist?" can never be answered. The index write stays serialized
+    inside ``load_project_index``, and two concurrent creates of the same name are
+    harmless either way.
+    """
+    typed = str(project_name or "").strip()
+    if not any(c.isalnum() for c in typed):
+        raise ValueError("h3_clipstream: 项目名称里至少要有一个字母或数字（例如「科幻短片 01」）。")
+    safe_name = sanitize_project_name(typed)
+    if len(safe_name) > MAX_PROJECT_NAME_LENGTH:
+        raise ValueError("h3_clipstream: 项目名称太长，请控制在 %d 个字符以内。" % MAX_PROJECT_NAME_LENGTH)
+    existed = os.path.isdir(os.path.join(get_base_bin_dir(), safe_name))
+    index = load_project_index(safe_name)
+    logger.info("[Clip Bin] %s project bin '%s'", "Reusing existing" if existed else "Created", safe_name)
+    return {"name": safe_name, "created": not existed, "clips": len(index.get("clips", []))}
+
+
+def delete_project(project_name: str, confirm: str = "") -> Dict[str, Any]:
+    """Deletes a whole project bin: every card, thumbnail and archived video inside it.
+
+    This is the mirror of ``create_project`` - same name rules, and the name that
+    reaches the disk is the sanitized one. ``confirm`` has to repeat that name, which
+    stops a panel left open on another bin from emptying the wrong folder when the
+    user switched bins in a second tab. The bin lock is held so a shot cannot be
+    saved into a folder that is being removed underneath it.
+
+    Not decorated with ``project_locked`` for the same reason as ``create_project``:
+    the decorator resolves the project through ``get_project_dir``, which would
+    recreate the folder it is about to delete.
+    """
+    typed = str(project_name or "").strip()
+    if not any(c.isalnum() for c in typed):
+        raise ValueError("h3_clipstream: 项目名称里至少要有一个字母或数字。")
+    safe_name = sanitize_project_name(typed)
+    if str(confirm or "").strip() != safe_name:
+        raise ValueError("h3_clipstream: 请先确认要删除的项目名称，再按删除。")
+    with _project_lock(safe_name):
+        base_dir = os.path.realpath(get_base_bin_dir())
+        target = os.path.realpath(os.path.join(base_dir, safe_name))
+        if target == base_dir or os.path.dirname(target) != base_dir:
+            raise ValueError("h3_clipstream: 项目名称无效，只能删除素材库内的项目文件夹。")
+        if not os.path.isdir(target):
+            return {"name": safe_name, "deleted": False, "clips": 0}
+        cards = len(load_project_index(safe_name).get("clips", []))
+        shutil.rmtree(target)
+    logger.info("[Clip Bin] Deleted project bin '%s' (%d cards)", safe_name, cards)
+    return {"name": safe_name, "deleted": True, "clips": cards}
 
 
 def _get_index_path(project_name: str) -> str:

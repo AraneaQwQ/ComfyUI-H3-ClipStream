@@ -132,6 +132,17 @@ Long films built by the Long Builder go to `output/h3_long/<project_name>/` and 
 
 > The Dual Picker shares the same three modes; in first-clip mode **both** latents output `None`.
 
+### Project menu
+
+Both bin panels choose the project from a dropdown instead of a typed name:
+
+- The **Clip Bin Picker** header menu lists every folder in the media pool with its card count (`科幻短片 01 (6 卡)`), and its first entry is `＋ 新建项目…`. Choosing it opens a name field inside the panel; **建立** creates the folder, writes an empty index, and switches the node to it. An existing name is selected rather than duplicated, and the name the node ends up holding is the sanitized folder name the server actually wrote.
+- The last entry is `🗑 删除当前项目…`. It opens a confirm line that names the bin and says how many cards - and how many archived videos - would go with it, and the button repeats that name. The request has to send the same name back as `confirm`, so a panel left open in another tab cannot empty the wrong folder. Afterwards the node moves to `Default_Project` if it exists, otherwise to the next remaining bin.
+- The **Clip Long Builder** menu offers only the folders that hold archived video, because a bin without video can never become a film.
+- `project_name` is still an ordinary widget (behind the advanced toggle) and still works when typed by hand - the menu only removes the need to remember names.
+
+Backed by `GET /minimax/clip_bin/projects` (every bin with its `clips` / `videos` counts; add `?videos_only=1` for the Long Builder), `POST /minimax/clip_bin/project` (creates a bin) and `POST /minimax/clip_bin/project/delete` (deletes a whole bin, `confirm` must repeat its name). All three write endpoints accept same-origin requests only.
+
 ---
 
 ### Long video assembly
@@ -402,6 +413,17 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 > **首段时 Picker 输出 `None`**：Motion Context 检测到空上下文后**原样透传 conditioning**（`trim_frames = 0`），Trim 也随之透传。整条链自然退化为普通首段工作流，无需拔线。
 
 > Dual Picker 同样支持三种模式；首段时**两个** latent 均输出 `None`。
+
+### 项目选单
+
+两个素材库面板都改成从下拉菜单里选项目，不用再手输名字：
+
+- **Clip Bin Picker** 标题栏的菜单列出素材库里的每一个文件夹并标出卡片数（`科幻短片 01 (6 卡)`），第一项是 `＋ 新建项目…`：选它就在面板里展开一个名字输入框，点**建立**即创建文件夹、写入空索引，并把节点切到这个项目。已有同名不会被重复创建，节点最终保存的是服务端真正写出的那个（已清洗过的）文件夹名。
+- 最后一项是 `🗑 删除当前项目…`：选它展开一行确认，写明要删掉哪个项目、会连带删掉多少张卡片（其中多少个已归档视频），按钮上再重复一遍项目名。请求必须把同一个名字作为 `confirm` 送回，所以另一个标签页里停着的面板不会删错文件夹。删完后节点自动切到 `Default_Project`（存在的话），否则切到下一个剩余项目。
+- **Clip Long Builder** 的菜单只列真正有归档视频的文件夹——没有视频的库拼不成片。
+- `project_name` 仍是普通控件（收在高级开关后面），手输照样能用；菜单只是让人不必再记名字。
+
+对应接口：`GET /minimax/clip_bin/projects`（列出全部项目及其 `clips` / `videos` 计数；Long Builder 用 `?videos_only=1`）、`POST /minimax/clip_bin/project`（新建项目）与 `POST /minimax/clip_bin/project/delete`（删除整个项目，`confirm` 必须重复项目名）。三个写接口都只接受同源请求。
 
 ---
 

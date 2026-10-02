@@ -93,7 +93,7 @@ function setupLongBuilderPanel(node) {
     title.className = "minimax-clip-bin-title h3-lb-title";
     title.textContent = "🎬 长视频拼接";
     const projectSelect = document.createElement("select");
-    projectSelect.className = "h3-lb-project";
+    projectSelect.className = "minimax-clip-bin-project";
     projectSelect.title = "选择包含视频文件的项目文件夹";
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "minimax-clip-bin-refresh-btn";
@@ -141,7 +141,7 @@ function setupLongBuilderPanel(node) {
     async function loadProjects() {
         let names = [];
         try {
-            const res = await api.fetchApi("/minimax/clip_bin/projects", { cache: "no-store" });
+            const res = await api.fetchApi("/minimax/clip_bin/projects?videos_only=1", { cache: "no-store" });
             if (res.ok) {
                 const data = await res.json();
                 names = (data.projects || []).map(item => ({

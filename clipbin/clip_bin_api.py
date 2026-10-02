@@ -5,6 +5,7 @@ import asyncio
 from .asset_paths import preview_url
 import json
 import logging
+from urllib.parse import urlsplit
 from typing import Dict, Any, List
 
 logger = logging.getLogger("minimax_clip_bin_api")
@@ -16,6 +17,8 @@ except ImportError:
 
 from .clip_bin_manager import (
     get_project_dir,
+    create_project,
+    delete_project,
     project_locked,
     delete_clip_asset,
     atomic_write_json,
@@ -201,11 +204,13 @@ def _card_has_video(project_dir: str, clip_id: str, entry: Dict[str, Any]) -> bo
     return False
 
 
-def list_video_projects_api() -> Dict[str, Any]:
-    """Lists the bins that hold at least one archived video, with their card counts.
+def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
+    """Lists project bins with their card and archived-video counts.
 
-    The Long Builder panel offers these in a dropdown instead of asking for a project
-    name to be typed by hand; a bin with no archived video can never become a film.
+    Both bin panels offer these in a dropdown instead of asking for a project name to
+    be typed by hand. The Picker wants every bin - an empty one is still a valid
+    target to save into - while the Long Builder passes ``videos_only`` because a bin
+    with no archived video can never become a film.
     """
     projects = []
     for name in list_projects():
@@ -214,9 +219,19 @@ def list_video_projects_api() -> Dict[str, Any]:
         project_dir = get_project_dir(name)
         videos = sum(1 for c in cards
                      if _card_has_video(project_dir, c.get("clip_id"), c))
-        if videos:
-            projects.append({"name": name, "clips": len(cards), "videos": videos})
+        if videos_only and not videos:
+            continue
+        projects.append({"name": name, "clips": len(cards), "videos": videos})
     return {"projects": projects}
+
+
+def _csrf_block(request):
+    """Rejects a mutating request that is not same-origin; ComfyUI has no CSRF gate."""
+    origin = request.headers.get("Origin") or request.headers.get("Referer", "")
+    if (request.headers.get("Sec-Fetch-Site") == "cross-site" or
+            not origin or urlsplit(origin).netloc.lower() != request.host.lower()):
+        return web.json_response({"error": "Only same-origin requests are allowed"}, status=403)
+    return None
 
 def register_clip_bin_routes() -> None:
     """Registers API routes into ComfyUI's PromptServer if running inside ComfyUI."""
@@ -243,16 +258,58 @@ def register_clip_bin_routes() -> None:
 
     @routes.get("/minimax/clip_bin/projects")
     async def handle_projects(request):
-        data = await asyncio.to_thread(list_video_projects_api)
+        videos_only = (request.rel_url.query.get("videos_only") or "").lower() in ("1", "true", "yes")
+        data = await asyncio.to_thread(list_projects_api, videos_only)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
+
+    @routes.post("/minimax/clip_bin/project")
+    async def handle_create_project(request):
+        blocked = _csrf_block(request)
+        if blocked is not None:
+            return blocked
+        if request.content_type != "application/json":
+            return web.json_response({"error": "Expected JSON"}, status=415)
+        try:
+            body = await request.json()
+            typed = body.get("project") if isinstance(body, dict) else None
+            result = await asyncio.to_thread(create_project, typed)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (TypeError, KeyError):
+            return web.json_response({"error": "Invalid project name"}, status=400)
+        except OSError:
+            logger.exception("Failed to create project bin")
+            return web.json_response({"error": "建立失败：没有写入权限或文件夹被占用，请关闭预览后重试。"}, status=409)
+        return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+    @routes.post("/minimax/clip_bin/project/delete")
+    async def handle_delete_project(request):
+        blocked = _csrf_block(request)
+        if blocked is not None:
+            return blocked
+        if request.content_type != "application/json":
+            return web.json_response({"error": "Expected JSON"}, status=415)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Expected an object")
+            result = await asyncio.to_thread(delete_project, body.get("project"), body.get("confirm"))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (TypeError, KeyError):
+            return web.json_response({"error": "Invalid project name"}, status=400)
+        except OSError:
+            logger.exception("Failed to delete project bin")
+            return web.json_response({"error": "删除失败：文件夹可能正被预览占用，请关闭预览后重试。"}, status=409)
+        if not result["deleted"]:
+            return web.json_response({"error": "项目已不存在，请刷新列表。"}, status=404)
+        return web.json_response(result, headers={"Cache-Control": "no-store"})
 
     @routes.post("/minimax/clip_bin/delete")
     async def handle_delete(request):
-        from urllib.parse import urlsplit
-        origin = request.headers.get("Origin") or request.headers.get("Referer", "")
-        if (request.headers.get("Sec-Fetch-Site") == "cross-site" or
-                not origin or urlsplit(origin).netloc.lower() != request.host.lower()):
-            return web.json_response({"error": "Only same-origin requests are allowed"}, status=403)
+        blocked = _csrf_block(request)
+        if blocked is not None:
+            return blocked
         if request.content_type != "application/json":
             return web.json_response({"error": "Expected JSON"}, status=415)
         try:

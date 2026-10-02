@@ -34,18 +34,96 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.minimax-clip-bin-project-tag {
+/* Project menu: choose the bin from the folders that exist, or start a new one.
+   Shared with the Long Builder panel, which loads this stylesheet too. */
+.minimax-clip-bin-project {
+    flex: 1 1 auto;
+    min-width: 0;
     background: #1e293b;
-    border: 1px solid #334155;
-    color: #38bdf8;
-    padding: 1px 6px;
+    border: 1px solid #475569;
+    color: #e2e8f0;
     border-radius: 4px;
-    font-family: monospace;
     font-size: 11px;
+    padding: 2px 4px;
 }
 
+.minimax-clip-bin-project:focus {
+    outline: none;
+    border-color: #60a5fa;
+}
+
+/* Name entry for a new bin; only visible while the menu is on "＋ 新建项目…". */
+.minimax-clip-bin-new {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.minimax-clip-bin-new[hidden] {
+    display: none;
+}
+
+.minimax-clip-bin-new-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: #0f172a;
+    border: 1px solid #475569;
+    color: #e2e8f0;
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 3px 6px;
+}
+
+.minimax-clip-bin-new-input:focus {
+    outline: none;
+    border-color: #60a5fa;
+}
+
+.minimax-clip-bin-new-error {
+    font-size: 10px;
+    color: #fca5a5;
+    white-space: nowrap;
+}
+
+/* Confirm step for deleting a whole bin; the sentence names what is at stake. */
+.minimax-clip-bin-danger {
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+.minimax-clip-bin-danger-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 10px;
+    color: #fca5a5;
+}
+
+.minimax-clip-bin-danger-btn {
+    background: #7f1d1d;
+    border: 1px solid #b91c1c;
+    color: #fee2e2;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.minimax-clip-bin-danger-btn:hover {
+    background: #b91c1c;
+    border-color: #ef4444;
+    color: #ffffff;
+}
+
+.minimax-clip-bin-danger-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
 .minimax-clip-bin-actions {
     display: flex;
     align-items: center;
