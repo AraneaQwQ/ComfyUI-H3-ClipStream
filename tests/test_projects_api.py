@@ -19,6 +19,7 @@ import _support
 _support.load_clipbin_package()
 cbm = _support.load_clipbin_module("clip_bin_manager")
 api = _support.load_clipbin_module("clip_bin_api")
+lb = _support.load_clipbin_module("long_builder")
 
 
 class BinFixture(unittest.TestCase):
@@ -170,6 +171,111 @@ class TestProjectDeletion(BinFixture):
         self.assertTrue(result["deleted"])
         self.assertEqual(self.names(), ["Default_Project"])
 
+
+class TestCardVideoProbe(BinFixture):
+    """The Long Builder card shows the resolution and duration of the file it joins.
+
+    A card records what a run generated, not what the archived MP4 turned out to be,
+    so the panel needs measured numbers. ffprobe runs once per file and the result is
+    cached in the card keyed by name, size and mtime; the flat video_* fields are that
+    cache re-exported for the front end and are never written back into meta.json.
+    Only a request that asks for a measurement pays for it, which is why these tests
+    pass want_probe=True the way the Builder panel does.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        self._real_probe = api.probe_video_streams
+        api.probe_video_streams = self._probe
+
+    def tearDown(self):
+        api.probe_video_streams = self._real_probe
+        super().tearDown()
+
+    def _probe(self, path):
+        self.calls.append(path)
+        return {"width": 1088, "height": 1920, "fps": 24.0, "frames": 149,
+                "duration": 6.208, "frames_estimated": False, "has_audio": True,
+                "sample_rate": 32000, "vcodec": "h264", "acodec": "aac"}
+
+    def card(self, project="Proj", variant_policy=""):
+        clips = api.get_project_clips_api(project, variant_policy, True)["clips"]
+        self.assertEqual(len(clips), 1)
+        return clips[0]
+
+    def meta(self, project, clip_id):
+        path = os.path.join(self.store, project, clip_id, "meta.json")
+        with open(path, "r", encoding="utf-8") as stream:
+            return json.load(stream)
+
+    def test_a_card_reports_the_resolution_and_duration_of_its_video(self):
+        self.add_card("Proj", "clip_a", "Shot 1")
+        card = self.card()
+        self.assertEqual((card["video_width"], card["video_height"]), (1088, 1920))
+        self.assertAlmostEqual(card["video_duration_seconds"], 6.208)
+        self.assertAlmostEqual(card["video_fps"], 24.0)
+        self.assertEqual(self.calls,
+                         [os.path.join(self.store, "Proj", "clip_a", "video_二采.mp4")])
+
+    def test_the_measurement_is_cached_in_the_card(self):
+        self.add_card("Proj", "clip_a", "Shot 1")
+        first = self.card()
+        second = self.card()
+        self.assertEqual(len(self.calls), 1, "ffprobe should run once per file")
+        self.assertEqual(second["video_width"], first["video_width"])
+        self.assertEqual(self.meta("Proj", "clip_a")["video_probe"]["width"], 1088)
+
+    def test_a_replaced_video_is_measured_again(self):
+        self.add_card("Proj", "clip_a", "Shot 1")
+        self.card()
+        target = os.path.join(self.store, "Proj", "clip_a", "video_二采.mp4")
+        with open(target, "wb") as stream:
+            stream.write(b"x" * 4096)
+        os.utime(target, (1000000, 1000000))
+        self.card()
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_card_without_video_reports_nothing_and_caches_nothing(self):
+        self.add_card("Proj", "clip_a", "Shot 1", video=None)
+        card = self.card()
+        self.assertEqual(card["video_width"], 0)
+        self.assertEqual(card["video_duration_seconds"], 0.0)
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("video_probe", self.meta("Proj", "clip_a"))
+
+    def test_the_builder_policy_decides_which_variant_is_measured(self):
+        # The numbers on the card have to be the numbers that end up in the film.
+        clip_dir = os.path.join(self.store, "Proj", "clip_a")
+        os.makedirs(clip_dir, exist_ok=True)
+        for name in ("video_一采.mp4", "video_二采.mp4"):
+            with open(os.path.join(clip_dir, name), "wb") as stream:
+                stream.write(b"x")
+        meta = {"clip_id": "clip_a", "project_name": "Proj", "shot_tag": "Shot 1",
+                "video_file": "video_一采.mp4",
+                "variants": {
+                    "一采": {"has_video": True, "video_file": "video_一采.mp4", "frames": 124},
+                    "二采": {"has_video": True, "video_file": "video_二采.mp4", "frames": 149}}}
+        with open(os.path.join(clip_dir, "meta.json"), "w", encoding="utf-8") as stream:
+            json.dump(meta, stream, ensure_ascii=False)
+
+        self.card()
+        self.assertTrue(self.calls[-1].endswith("video_一采.mp4"),
+                        "the Pickers keep reporting the declared file")
+        self.card()  # cached now: no second measurement
+        self.assertEqual(len(self.calls), 1)
+        self.card(variant_policy=lb.VARIANT_PREFER_UP)
+        self.assertTrue(self.calls[-1].endswith("video_二采.mp4"))
+
+    def test_a_picker_request_measures_nothing(self):
+        # The Pickers never show these fields and already probe the duration above,
+        # so they must not pay for a second ffprobe per card.
+        self.add_card("Proj", "clip_a", "Shot 1")
+        card = api.get_project_clips_api("Proj")["clips"][0]
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("video_width", card)
+        self.assertNotIn("video_duration_seconds", card)
+        self.assertNotIn("video_probe", self.meta("Proj", "clip_a"))
 
 if __name__ == "__main__":
     unittest.main()

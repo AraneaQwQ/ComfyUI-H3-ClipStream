@@ -57,6 +57,7 @@ EXPECTED_INPUTS = {
     "MiniMaxClipBinDualPicker": [("project_name", False), ("mode", False),
                                  ("clip_selection", False), ("custom_clip_path", True)],
     "MiniMaxClipBinLongBuilder": [("project_name", False), ("exclude_clips", True),
+                                      ("clip_order", True),
                                       ("variant_policy", False), ("join_mode", False),
                                       ("fps", True), ("output_name", True)],
     "MiniMaxH3MotionContextClipStream": [("conditioning", False), ("vae", False), ("latent", False),
@@ -145,9 +146,9 @@ class TestNodeInterfaces(unittest.TestCase):
         self.assertEqual(list(dual.options), DUAL_PICKER_MODES)
 
     def test_long_builder_exposes_nothing_but_the_panel_inputs(self):
-        # The card panel writes project_name and exclude_clips; every other widget is
-        # hidden behind the advanced toggle on purpose, and the node has one VIDEO
-        # output so there is no socket to guess at.
+        # The card panel writes project_name, exclude_clips and the dragged card
+        # order; every other widget is hidden behind the advanced toggle on purpose,
+        # and the node has one VIDEO output so there is no socket to guess at.
         schema = _schemas()["MiniMaxClipBinLongBuilder"]
         for item in schema.inputs:
             self.assertTrue(item.advanced, item.id)

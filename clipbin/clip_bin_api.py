@@ -30,6 +30,13 @@ from .clip_bin_manager import (
     VIDEO_EXTENSIONS,
     resolve_source_video_path,
 )
+# The Builder panel shows the resolution and duration of the video it would actually
+# join, so it borrows the same variant choice and the same ffprobe reader the node
+# uses. long_builder only depends on clip_bin_manager, so this stays one-way.
+from .long_builder import (
+    pick_variant,
+    probe_video_streams,
+)
 
 
 def _probe_and_fix_durations(project_name: str, clip_id: str, entry: Dict[str, Any], clip_dir: str) -> bool:
@@ -60,7 +67,75 @@ def _probe_and_fix_durations(project_name: str, clip_id: str, entry: Dict[str, A
     return fixed
 
 
-_FRONTEND_ONLY_KEYS = {"thumbnail_file", "subfolder", "thumbnail_url", "video_url"}
+# Measured stream parameters are cached inside the card under "video_probe"; the flat
+# video_* fields below are that cache re-exported for the front end and are never
+# written back into meta.json.
+_FRONTEND_ONLY_KEYS = {"thumbnail_file", "subfolder", "thumbnail_url", "video_url",
+                      "video_width", "video_height", "video_fps", "video_frames",
+                      "video_duration_seconds"}
+
+VIDEO_PROBE_KEY = "video_probe"
+
+
+def _video_probe_fields(clip_dir: str, video_file: str, entry: Dict[str, Any],
+                        probe=None):
+    """Returns (display fields, whether a new measurement was taken) for one video.
+
+    A card records what it generated, not what the archived MP4 really is, so the
+    resolution and duration the Builder shows have to be measured. ffprobe runs once
+    per file and the result is cached in the card, keyed by file name plus size and
+    mtime, so a re-encode or a replaced file is measured again while a normal list
+    call costs nothing. An unreadable file yields zeros and caches nothing, so the
+    next request retries.
+
+    ``probe`` is injectable and the module attribute is read at call time, so a test
+    can replace clip_bin_api.probe_video_streams and drive this code unchanged.
+    """
+    probe = probe or probe_video_streams
+    empty = {"video_width": 0, "video_height": 0, "video_fps": 0.0,
+             "video_frames": 0, "video_duration_seconds": 0.0}
+    name = str(video_file or "")
+    path = os.path.join(clip_dir, name)
+    if not name or not os.path.isfile(path):
+        return empty, False
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return empty, False
+
+    cached = entry.get(VIDEO_PROBE_KEY)
+    if (isinstance(cached, dict) and cached.get("file") == name
+            and cached.get("size") == int(stat.st_size)
+            and cached.get("mtime") == int(stat.st_mtime)):
+        return {
+            "video_width": int(cached.get("width") or 0),
+            "video_height": int(cached.get("height") or 0),
+            "video_fps": float(cached.get("fps") or 0.0),
+            "video_frames": int(cached.get("frames") or 0),
+            "video_duration_seconds": float(cached.get("duration") or 0.0),
+        }, False
+
+    measured = probe(path)
+    if not measured:
+        return empty, False
+    record = {
+        "file": name,
+        "size": int(stat.st_size),
+        "mtime": int(stat.st_mtime),
+        "width": int(measured.get("width") or 0),
+        "height": int(measured.get("height") or 0),
+        "fps": round(float(measured.get("fps") or 0.0), 3),
+        "frames": int(measured.get("frames") or 0),
+        "duration": round(float(measured.get("duration") or 0.0), 3),
+    }
+    entry[VIDEO_PROBE_KEY] = record
+    return {
+        "video_width": record["width"],
+        "video_height": record["height"],
+        "video_fps": record["fps"],
+        "video_frames": record["frames"],
+        "video_duration_seconds": record["duration"],
+    }, True
 
 
 def _persist_clip_entry(project_name: str, clip_id: str, entry: Dict[str, Any]) -> None:
@@ -93,8 +168,19 @@ def _persist_clip_entry(project_name: str, clip_id: str, entry: Dict[str, Any]) 
             logger.warning("[Clip Bin API] Failed to persist probed duration for '%s': %s", clip_id, e)
 
 @project_locked
-def get_project_clips_api(project_name: str) -> Dict[str, Any]:
-    """Retrieves full clip metadata and relative thumbnail paths for the frontend."""
+def get_project_clips_api(project_name: str, variant_policy: str = "",
+                        want_probe: bool = False) -> Dict[str, Any]:
+    """Retrieves full clip metadata and relative thumbnail paths for the frontend.
+
+    ``variant_policy`` is optional: when the Long Builder passes its own policy, each
+    card reports the video that policy would pick, so the numbers on the card are the
+    numbers that end up in the film. The Pickers leave it empty and keep the old
+    behaviour.
+
+    ``want_probe`` is only true for the Long Builder, which shows resolution and
+    duration on its cards. The Pickers do not display those fields and already pay a
+    duration probe per card above, so they ask for no measurement at all.
+    """
     p_name = (project_name or "Default_Project").strip()
     idx = load_project_index(p_name)
     clips = idx.get("clips", [])
@@ -170,6 +256,18 @@ def get_project_clips_api(project_name: str) -> Dict[str, Any]:
         enriched["has_video"] = has_video
         enriched["video_file"] = video_file if has_video else ""
         enriched["video_url"] = video_url
+
+        if want_probe:
+            # Real stream parameters of the file that would be joined, measured once.
+            joined_file = video_file
+            if variant_policy:
+                _variant, chosen, _variant_meta = pick_variant(c, variant_policy)
+                if chosen and os.path.isfile(os.path.join(clip_dir, chosen)):
+                    joined_file = chosen
+            fields, measured_now = _video_probe_fields(clip_dir, joined_file, c)
+            if measured_now:
+                _persist_clip_entry(p_name, clip_id, c)
+            enriched.update(fields)
         enriched_clips.append(enriched)
 
     return {
@@ -252,7 +350,9 @@ def register_clip_bin_routes() -> None:
     @routes.get("/minimax/clip_bin/list")
     async def handle_list_clips(request):
         project = request.rel_url.query.get("project", "Default_Project")
-        data = await asyncio.to_thread(get_project_clips_api, project)
+        variant_policy = request.rel_url.query.get("variant_policy", "")
+        want_probe = request.rel_url.query.get("probe", "").strip().lower() in ("1", "true", "yes")
+        data = await asyncio.to_thread(get_project_clips_api, project, variant_policy, want_probe)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
 
 

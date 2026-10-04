@@ -120,6 +120,57 @@ class TestShotOrder(unittest.TestCase):
         self.assertIsNone(lb.shot_number(None))
 
 
+class TestManualCardOrder(unittest.TestCase):
+    """Dragging a card on the panel writes clip_order; the film follows it.
+
+    clip_order uses the same references as exclude_clips and is read top to bottom.
+    Cards it does not mention are appended by shot number, so a segment generated
+    after the last drag still joins the film instead of disappearing, and a reference
+    whose card was deleted is reported rather than fatal.
+    """
+
+    def setUp(self):
+        self.cards = [
+            card("clip_c3", "Shot 3", parent="clip_c2", created_at="2026-10-02 10:03:00"),
+            card("clip_c1", "Shot 1", parent="", created_at="2026-10-02 10:01:00"),
+            card("clip_c2", "Shot 2", parent="clip_c1", created_at="2026-10-02 10:02:00"),
+        ]
+
+    def test_the_dragged_order_wins_over_shot_numbers(self):
+        order, warnings = lb.resolve_shot_order(self.cards, clip_order="clip_c2,clip_c1,clip_c3")
+        self.assertEqual(order, ["clip_c2", "clip_c1", "clip_c3"])
+        self.assertEqual(warnings, [])
+
+    def test_a_shot_tag_reference_orders_the_same_card(self):
+        order, _ = lb.resolve_shot_order(self.cards, clip_order="Shot 2, Shot 1, Shot 3")
+        self.assertEqual(order, ["clip_c2", "clip_c1", "clip_c3"])
+
+    def test_cards_left_out_of_the_order_are_appended_by_shot_number(self):
+        # One drag happened, then Shot 4 was generated: the new card must still appear.
+        cards = self.cards + [card("clip_c4", "Shot 4", parent="clip_c3",
+                                  created_at="2026-10-02 10:04:00")]
+        order, _ = lb.resolve_shot_order(cards, clip_order="clip_c3,clip_c1")
+        self.assertEqual(order, ["clip_c3", "clip_c1", "clip_c2", "clip_c4"])
+
+    def test_a_reference_that_is_no_longer_in_the_bin_is_reported_not_fatal(self):
+        order, warnings = lb.resolve_shot_order(self.cards,
+                                               clip_order="clip_gone,clip_c1,clip_c2")
+        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
+        self.assertTrue(any("clip_gone" in w for w in warnings), warnings)
+
+    def test_a_card_listed_twice_joins_once(self):
+        order, _ = lb.resolve_shot_order(self.cards, clip_order="clip_c1,clip_c2,clip_c1")
+        self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
+
+    def test_an_excluded_card_stays_out_even_when_it_is_ordered(self):
+        order, _ = lb.resolve_shot_order(self.cards,
+                                         exclude_text="clip_c2", clip_order="clip_c2,clip_c1")
+        self.assertEqual(order, ["clip_c1", "clip_c3"])
+
+    def test_an_empty_order_is_exactly_the_shot_number_order(self):
+        self.assertEqual(lb.resolve_shot_order(self.cards, clip_order="")[0],
+                         lb.resolve_shot_order(self.cards)[0])
+
 class TestNumberingGaps(unittest.TestCase):
     """A deleted take leaves a hole in the shot numbers; the panel and the log say so."""
 
@@ -251,6 +302,43 @@ class TestSeamWarnings(unittest.TestCase):
         self.assertEqual(lb.seam_warnings(segments), [])
 
 
+    def test_a_first_generation_segment_is_silent_wherever_it_sits(self):
+        # A card made with no context has nothing pinned at its head, so equal frame
+        # counts are normal even after it was dragged into the middle of the film.
+        segments = [{"label": "Shot 2", "latent_frames": 124, "frames": 119},
+                    {"label": "Shot 1", "latent_frames": 243, "frames": 243, "is_initial": True},
+                    {"label": "Shot 3", "latent_frames": 124, "frames": 119}]
+        self.assertEqual(lb.seam_warnings(segments), [])
+
+    def test_a_segment_without_the_initial_marker_is_still_judged(self):
+        # Only the marker excuses equal frame counts; an unlabelled middle segment is
+        # still read as a continuation whose frames were never cut.
+        self.assertEqual(len(lb.seam_warnings([
+            {"label": "Shot 1", "latent_frames": 124, "frames": 124},
+            {"label": "Shot 2", "latent_frames": 124, "frames": 124, "is_initial": False}])), 1)
+
+
+class TestInitialGenerationMarker(unittest.TestCase):
+    """Both Pickers leave a no-context generation in the parent field."""
+
+    def test_dual_picker_initial_tag_is_recognised(self):
+        self.assertTrue(lb.is_initial_generation("[INITIAL]"))
+
+    def test_clip_bin_picker_initial_tag_is_recognised(self):
+        self.assertTrue(lb.is_initial_generation("[INITIAL_GENERATION]"))
+
+    def test_spaces_and_case_do_not_hide_the_tag(self):
+        self.assertTrue(lb.is_initial_generation("  [initial]  "))
+
+    def test_a_real_parent_is_not_initial(self):
+        self.assertFalse(lb.is_initial_generation("clip_20261004_022730_609522_Shot1"))
+
+    def test_a_missing_parent_is_not_treated_as_initial(self):
+        # An unwired lineage says nothing, so the seam check keeps its teeth.
+        self.assertFalse(lb.is_initial_generation(""))
+        self.assertFalse(lb.is_initial_generation(None))
+
+
 class TestConcatList(unittest.TestCase):
     def test_paths_are_forward_slashed_and_quote_escaped(self):
         text = lb.concat_list_text([r"C:\out\it's a shot.mp4", "/tmp/plain.mp4"])
@@ -327,6 +415,16 @@ class BuildTestCase(unittest.TestCase):
         self.assertTrue(os.path.isfile(result["path"]))
         self.assertIn("3 段", result["report"])
 
+    def test_the_dragged_card_order_is_the_order_that_is_joined(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        self.add_card("Proj", "clip_b", "Shot 2", "clip_a")
+        self.add_card("Proj", "clip_c", "Shot 3", "clip_b")
+        result = lb.build_long_video("Proj", clip_order="clip_b,clip_a,clip_c")
+        self.assertEqual([s["clip_id"] for s in result["segments"]],
+                         ["clip_b", "clip_a", "clip_c"])
+        paths = [p.replace("\\", "/") for p in self.calls[0]["paths"]]
+        self.assertEqual([p.split("/")[-2] for p in paths], ["clip_b", "clip_a", "clip_c"])
+
     def test_mismatched_segments_are_reencoded_and_reported(self):
         self.add_card("Proj", "clip_a", "Shot 1", "")
         self.add_card("Proj", "clip_b", "Shot 2", "clip_a", width=1920, height=1080)
@@ -383,6 +481,18 @@ class BuildTestCase(unittest.TestCase):
         result = lb.build_long_video("Proj")
         self.assertTrue(any("Shot 2" in w and "Trim" in w for w in result["warnings"]))
         self.assertIn("注意：", result["report"])
+
+    def test_a_first_generation_card_moved_into_the_film_is_not_warned(self):
+        # The real shape of the complaint: Shot 1 was made with no context, so its
+        # video is exactly as long as its latent, and that is correct wherever it is
+        # joined - it must not be reported as an untrimmed seam.
+        self.add_card("Proj", "clip_a", "Shot 1", "[INITIAL]", frames=243, probed_frames=243)
+        self.add_card("Proj", "clip_b", "Shot 2", "clip_a")
+        self.add_card("Proj", "clip_c", "Shot 3", "clip_b")
+        result = lb.build_long_video("Proj", clip_order="clip_b,clip_a,clip_c")
+        self.assertEqual([s["clip_id"] for s in result["segments"]], ["clip_b", "clip_a", "clip_c"])
+        self.assertTrue(result["segments"][1]["is_initial"])
+        self.assertFalse(any("Trim" in w for w in result["warnings"]))
 
     def test_empty_project_fails_clearly(self):
         with self.assertRaises(ValueError) as caught:

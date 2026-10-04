@@ -121,8 +121,9 @@ def shot_sort_key(clip: Dict[str, Any]) -> Tuple[int, int, str, str]:
 
 
 def resolve_shot_order(clips: List[Dict[str, Any]],
-                       exclude_text: str = "") -> Tuple[List[str], List[str]]:
-    """Works out which cards to join: the whole bin, smallest shot number first.
+                       exclude_text: str = "",
+                       clip_order: str = "") -> Tuple[List[str], List[str]]:
+    """Works out which cards to join, and in what order.
 
     The bin is filled one shot at a time, so the default film is every card in the
     bin ordered by its shot number - it starts at Shot 4 when the earlier takes were
@@ -130,6 +131,12 @@ def resolve_shot_order(clips: List[Dict[str, Any]],
     part of a shot tag), which is how a rejected take or a branch is left out.
     Lineage is not used: it records which card a generation continued from, not the
     order the finished film plays in.
+
+    ``clip_order`` is the order the user dragged the cards into on the panel, written
+    as the same kind of references and read top to bottom. Cards it does not mention
+    are appended in shot-number order, so a segment generated after the last drag
+    still joins the film instead of silently disappearing; a reference it names that is
+    no longer in the bin is reported and skipped.
 
     Returns (clip_ids in join order, warnings).
     """
@@ -145,8 +152,20 @@ def resolve_shot_order(clips: List[Dict[str, Any]],
         else:
             excluded.add(clip["clip_id"])
 
-    ordered = [clip["clip_id"] for clip in sorted(clips, key=shot_sort_key)
-               if clip["clip_id"] not in excluded]
+    manual: List[str] = []
+    for ref in parse_sequence(clip_order):
+        clip = find_clip(clips, ref)
+        if clip is None:
+            warnings.append("手动顺序里的镜头「%s」在库里找不到（可能已删除）" % ref)
+            continue
+        clip_id = str(clip["clip_id"])
+        if clip_id in excluded or clip_id in manual:
+            continue
+        manual.append(clip_id)
+
+    ordered = list(manual)
+    ordered.extend(clip["clip_id"] for clip in sorted(clips, key=shot_sort_key)
+                   if clip["clip_id"] not in excluded and clip["clip_id"] not in manual)
     if not ordered:
         return [], warnings + ["库里的镜头全被排除了，没有可拼接的片段"]
     return ordered, warnings
@@ -304,6 +323,20 @@ def classify_join(samples: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     return not reasons, reasons
 
 
+INITIAL_PARENT_TAG = "[INITIAL"
+
+
+def is_initial_generation(parent_clip_id: Any) -> bool:
+    """True when the card says it was generated with no context (a first shot).
+
+    Both Pickers output '[INITIAL]' / '[INITIAL_GENERATION]' as their clip_id in
+    initial mode, and the Saver keeps whatever was wired into parent_clip_id. Such
+    a segment was never continued from another one, so it has no pinned frames at
+    its head and its video is meant to be exactly as long as its latent.
+    """
+    return str(parent_clip_id or "").strip().upper().startswith(INITIAL_PARENT_TAG)
+
+
 def seam_warnings(segments: List[Dict[str, Any]]) -> List[str]:
     """Flags segments whose archived video still contains the overlap frames.
 
@@ -312,11 +345,19 @@ def seam_warnings(segments: List[Dict[str, Any]]) -> List[str]:
     frames, the long film repeats a beat at that join. The latent frame count and
     the measured video frame count are equal exactly in that case, which is the
     cheapest reliable signal - no frame decoding needed.
+
+    Two segments sit outside that rule. The first one in the film has no seam in
+    front of it. A card generated with no context (is_initial) has no pinned frames
+    at its head either, wherever it ends up in the order, so equal frame counts
+    there are simply what a first shot looks like - trimming it would cut real
+    frames off the film.
     """
     warnings: List[str] = []
     for index, segment in enumerate(segments, start=1):
         if index == 1:
             continue  # the first shot has no overlap by definition
+        if segment.get("is_initial"):
+            continue  # generated with no context: there was never anything to trim
         latent = int(segment.get("latent_frames") or 0)
         video = int(segment.get("frames") or 0)
         if latent <= 0 or video <= 0 or segment.get("frames_estimated"):
@@ -374,18 +415,19 @@ def concat_videos(paths: List[str], output_path: str, mode: str,
 
 def build_long_video(project_name: str,
                      exclude_clips: str = "",
+                     clip_order: str = "",
                      variant_policy: str = VARIANT_PREFER_UP,
                      join_mode: str = JOIN_AUTO,
                      fps: float = 24.0,
                      output_name: str = "") -> Dict[str, Any]:
-    """Joins a project's archived videos into one MP4, smallest shot number first.
+    """Joins a project's archived videos into one MP4, in the panel's card order.
 
     Returns a dict with path, filename, subfolder, total_frames, duration_seconds,
     segments, warnings, join_method and a human-readable report.
     """
     p_name = (project_name or "Default_Project").strip()
     clips = list_bin_clips(p_name)
-    chain, warnings = resolve_shot_order(clips, exclude_clips)
+    chain, warnings = resolve_shot_order(clips, exclude_clips, clip_order)
     if not chain:
         raise ValueError("h3_clipstream: 项目「%s」里没有可拼接的镜头。%s" % (p_name, " ".join(warnings)))
     warnings.extend(numbering_gaps(clips))
@@ -411,6 +453,7 @@ def build_long_video(project_name: str,
             "variant": variant,
             "video_path": video_path,
             "latent_frames": int(variant_meta.get("frames") or meta.get("frames") or 0),
+            "is_initial": is_initial_generation(meta.get("parent_clip_id")),
             **probe,
         })
 

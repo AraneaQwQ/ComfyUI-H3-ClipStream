@@ -23,9 +23,8 @@
     color: #93c5fd;
 }
 
-.h3-lb-deck {
-    max-height: 420px;
-}
+/* The deck fills the node, and the node is sized to the card size the user chose, so a
+   fixed cap here would fight that and hide the rest of the film. */
 
 .h3-lb-empty {
     padding: 12px 6px;
@@ -61,7 +60,12 @@
     color: #fecaca;
 }
 
+/* Where the film went, and the switch that puts the node's own preview away while the
+   cards are being arranged. */
 .h3-lb-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     border-top: 1px solid #3a3a3a;
     padding-top: 6px;
     margin-top: 4px;
@@ -69,4 +73,117 @@
     color: #94a3b8;
     font-family: monospace;
     word-break: break-all;
+}
+
+.h3-lb-footer-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.h3-lb-film-toggle {
+    flex: 0 0 auto;
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #334155;
+    border-radius: 3px;
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: inherit;
+}
+
+.h3-lb-film-toggle:hover {
+    border-color: #60a5fa;
+    color: #e2e8f0;
+}
+
+/* No run yet: there is nothing to put away. */
+.h3-lb-film-toggle:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* The zoom stops at 100% and 400%: show that instead of looking broken. */
+.h3-lb-container .minimax-clip-bin-refresh-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+    transform: none;
+}
+
+/* Which rule the deck order follows, and the way back to shot-number order. */
+.h3-lb-order-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 10px;
+    color: #94a3b8;
+}
+
+.h3-lb-order-manual {
+    color: #fbbf24;
+}
+
+.h3-lb-order-reset {
+    margin-left: auto;
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #334155;
+    border-radius: 3px;
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
+}
+
+.h3-lb-order-reset:hover {
+    border-color: #60a5fa;
+    color: #e2e8f0;
+}
+
+/* Where this segment sits in the finished film. */
+.h3-lb-place {
+    left: 4px;
+    right: auto;
+    background: #1d4ed8;
+    color: #e0e7ff;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Drag a card to move it along the timeline. The card being moved fades, and the
+   card the pointer is over shows the gap it will land in. */
+.h3-lb-card[draggable="true"] {
+    cursor: grab;
+}
+
+.h3-lb-dragging {
+    opacity: 0.35;
+    border-style: dashed;
+    transform: none;
+}
+
+.h3-lb-drop-before::before,
+.h3-lb-drop-after::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #fbbf24;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+    z-index: 3;
+}
+
+.h3-lb-drop-before::before {
+    left: 0;
+}
+
+.h3-lb-drop-after::after {
+    right: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .h3-lb-card {
+        transition: none;
+    }
 }

@@ -2,7 +2,7 @@
 
 **Current: ComfyUI V3 API + Nodes 2.0.** Requires ComfyUI ≥ 0.37.0. See [V3_MIGRATION.md](V3_MIGRATION.md) for details.
 Card deletion supported on both single & dual pickers. See [CACHE_AND_DELETION.md](CACHE_AND_DELETION.md).
-Long Builder stitches a project's archived shots into one film — pick the project and click cards out in its panel. See [Long video assembly](#long-video-assembly).
+Long Builder stitches a project's archived shots into one film — pick the project, click cards out, and drag cards into the order you want. See [Long video assembly](#long-video-assembly).
 
 **[English](#english)** | **[简体中文](#简体中文)**
 
@@ -67,7 +67,7 @@ Dual Clip Picker ──► latent_一采 ─► Motion Context (一采 path) . c
                  └► latent_二采 ─► Motion Context (二采 path) . context_latent
 
 [Long film]
-  Clip Long Builder  (panel: choose project → click cards to leave them out; order = shot number)
+  Clip Long Builder  (panel: choose project → click cards out, drag cards to reorder)
     → ffprobe pre-check per segment → ffmpeg concat
     → output/h3_long/<project>/<name>.mp4   (never written back into the card library)
 ```
@@ -106,7 +106,7 @@ Long films built by the Long Builder go to `output/h3_long/<project_name>/` and 
 | **Clip Bin Picker** | Visual card gallery. 3 modes: **Auto** / **Force Initial** / **Strict Chaining**. Outputs `latent`, `tail_frame`, `first_frame`, `prompt`, `clip_id`, `project_name` |
 | **Dual Clip Saver** (一采+二采) | Archives the latents of both sampler passes (一采 required, 二采 optional) into **one card**, badged 「仅一采」 / 「含一采+二采」 |
 | **Dual Clip Picker** (一采+二采) | Same 3 modes as the Picker. One card click outputs **both** `latent_一采` and `latent_二采` (a pass that didn't run outputs `None`), plus `first_frame` / `tail_frame` / `prompt` / `clip_id` / `project_name` |
-| **Clip Long Builder** | Panel for choosing the project and clicking cards out. Reads the MP4s already archived in a project's cards, orders them by the shot number on the card, pre-checks every segment with ffprobe and joins them into one long video. One `video` output that previews inline; written to `output/h3_long/<project>/` — never into the card library |
+| **Clip Long Builder** | Panel for choosing the project, clicking cards out and dragging them into order. Reads the MP4s already archived in a project's cards, orders them by the shot number on the card (or by the dragged card order), pre-checks every segment with ffprobe and joins them into one long video. Each card shows the resolution and duration measured from its archived video. One `video` output that previews inline; written to `output/h3_long/<project>/` — never into the card library |
 
 #### Motion-Context (`conditioning/minimax`)
 
@@ -163,19 +163,24 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 - A **project dropdown** lists only the folders that hold archived video, with the number of usable segments next to each name. Nothing to type.
 - A **card deck** shows every card in that project, ordered the way the film plays; hover a card to play its archived video.
 - **Click a card to leave it out** — it greys out with an 已排除 badge, click again to put it back. This is how a rejected take or a branch is skipped.
-- The summary line says exactly what will be joined (`将拼接 4 段：Shot 1 → Shot 2 → Shot 4`), what is excluded, and what has no archived video.
-- After a run the finished film plays inline on the node and the panel prints where it was written.
+- **Drag a card onto another to move it along the timeline** — the deck order *is* the film order, and the panel writes it into `clip_order`. Every joining card carries its position in the film (`#1`, `#2`, …), and `↺ 按镜头序号` puts the deck back on shot numbers.
+- **Each card shows the resolution and duration of its archived video** (`1088×1920 · 6.21s`) — measured with ffprobe once per file and cached in the card, never estimated from the latent. The summary line adds the total length of the film.
+- The summary line says exactly what will be joined (`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`), what is excluded, and what has no archived video.
+- **Card size is a 100%–400% zoom**, the same steps as the Clip Bin picker. It changes the cards only: the width you gave the node is never touched, and the rows you were looking at stay on screen. `⤢ 适应` sets the height to two rows at the current width and the rest scrolls.
+- **The node keeps the size you gave it.** Refresh, re-ordering, switching project and a new run redraw the cards but never resize the node — only `⤢ 适应` and the zoom buttons change its height, and a node that has never been sized is fitted once when it first gets cards.
+- After a run the finished film plays inline on the node and the panel prints where it was written. `▼ 收起成片` puts that preview away — the node becomes compact while the cards are being arranged — and `▶ 展开成片` gives the room back. Expanding goes back to exactly the height the node had before you collapsed it, so toggling never makes the node creep taller. Both the zoom and the preview choice are remembered in this browser.
 
 **How the order is resolved**
 
-- Cards are ordered by the shot number on the card (`Shot 1`, `Shot 2`, …) — the order the film was generated in. A project whose early takes were deleted simply starts at `Shot 4`.
+- By default cards are ordered by the shot number on the card (`Shot 1`, `Shot 2`, …) — the order the film was generated in. A project whose early takes were deleted simply starts at `Shot 4`.
+- **Dragging a card switches the deck to manual order**: `clip_order` then holds the `clip_id`s top to bottom and the film follows it. Cards the order does not mention are appended by shot number, so a segment generated after the last drag still joins the film instead of disappearing.
 - `Shot 12` sorts after `Shot 2`, never between `Shot 1` and `Shot 2`.
 - Tags with no number (a hand-written description) keep generation order and come after the numbered cards.
 - Lineage (`parent_clip_id`) is **not** used for the timeline — it records which card a generation continued from, which is a different question. It stays on the card for the Pickers.
 - A hole in the numbering (a take deleted from the bin) is named in the log; switching a card off in the panel is not a hole.
 - A card with no archived video is skipped and named in the log. The panel greys it out and will not select it.
 
-**Options** — all behind the advanced toggle; the panel writes the first two
+**Options** — all behind the advanced toggle; the panel writes the first three
 
 | Option | Notes |
 |--------|-------|
@@ -183,13 +188,14 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 | `join_mode` | **auto** (default): lossless `-c copy` when every segment matches, otherwise re-encode to unify. **copy**: hard error on any mismatch — for projects you have verified are uniform. **reencode**: always re-encode; this is how you force mixed-resolution history together. |
 | `project_name` | Written by the panel's project dropdown. Filling it by hand works too — press 刷新 afterwards.
 | `exclude_clips` | Written by the panel: the `clip_id`s switched off in the deck, comma separated. A shot-tag substring works here if you edit it by hand.
+| `clip_order` | Written by the panel when a card is dragged: the `clip_id`s in the order the film should play, comma separated. Empty means follow the shot numbers; `↺ 按镜头序号` in the panel clears it. Cards it does not name are appended by shot number, and a `clip_id` whose card was deleted is reported and skipped.
 | `fps` | Used only when re-encoding. Match the generation fps (24). |
 | `output_name` | Optional. Default is `<project>_<n>shots_<timestamp>.mp4`. |
 
 **Pre-flight checks** — every segment is measured with ffprobe *before* anything is written:
 
 - Resolution / frame rate / audio presence / sample-rate mismatch → `auto` switches to re-encode and says which parameter differed; `copy` refuses and tells you to switch.
-- **Untrimmed seam**: if a segment's measured video frame count is **not below** its latent frame count, the pinned overlap frames are still in that video and the film repeats a beat at the join. The log names the segment — re-archive it from the Trim output and rebuild. The first segment is never flagged (it has no overlap by definition).
+- **Untrimmed seam**: if a segment's measured video frame count is **not below** its latent frame count, the pinned overlap frames are still in that video and the film repeats a beat at the join. The log names the segment — re-archive it from the Trim output and rebuild. Two segments are never flagged: the first one in the film, and any card the Pickers marked as a no-context generation (`parent_clip_id` is `[INITIAL]` or `[INITIAL_GENERATION]`) - a first shot has nothing pinned at its head, so equal frame counts there are normal wherever it ends up in the order.
 - Frame counts come from ffprobe, never from the card's `meta.frames` (that number is the latent count — see below).
 
 > Card badges show the **latent** frame count, because that is what continuation consumes. Overlap frames are therefore *not* annotated on the card; they are only explained in the Long Builder's log.
@@ -252,21 +258,23 @@ ComfyUI-H3-ClipStream/
 │   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # Ready-to-load example workflow
 ├── scripts/
 │   └── sync_upstream.sh     # Helper: track upstream Motion-Context updates
-├── tests/                   # unittest suite: run with python -m unittest discover -s tests -t .
+├── tests/                   # unittest suite: python -m unittest discover -s tests -t .; JS: node tests/js/
 │   ├── _support.py          # Loaders: ComfyUI on sys.path, clipbin without comfy_api
 │   ├── test_node_schema.py  # Locks the 11 node ids, categories, inputs, outputs, options
 │   ├── test_frame_grid.py   # Frame <-> latent-step grid invariants
 │   ├── test_latent_codec.py # latent pack/unpack + image/audio standardising
 │   ├── test_asset_paths.py  # Card path safety & preview URLs
 │   ├── test_clip_bin_store.py # Single/dual card round-trip, index, deletion
-│   ├── test_long_builder.py # Shot-number ordering, join classification, seam warnings
-│   └── test_projects_api.py # Project dropdown feed: projects that hold archived video
+│   ├── test_long_builder.py # Shot-number & dragged ordering, join classification, seam warnings
+│   ├── test_projects_api.py # Project dropdown feed, card video probe cache
+│   └── js/long_builder_order.test.mjs # Deck order (node tests/js/long_builder_order.test.mjs)
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context frontend
 │   ├── clip_bin_picker.js         # Clip Bin gallery frontend (card wrap layout)
 │   ├── dom_panel.js               # DOM panel used by the Pickers
 │   ├── delete_button.js           # Card delete buttons + confirm flow
-│   ├── long_builder_panel.js      # Long Builder panel: project dropdown + card deck
+│   ├── long_builder_panel.js      # Long Builder panel: project dropdown + draggable deck
+│   ├── long_builder_order.js      # Deck order = film order (pure, unit-tested)
 │   ├── clip_bin_picker.css        # Card gallery styles (shared by both panels)
 │   └── long_builder.css           # Long Builder panel chrome
 ├── motion_context/
@@ -388,7 +396,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | **Clip Bin Picker** | 可视化卡片画廊。三种模式：**Auto** / **Force Initial** / **Strict Chaining**。输出 `latent`、`tail_frame`、`first_frame`、`prompt`、`clip_id`、`project_name` |
 | **Dual Clip Saver** (一采+二采) | 把两条采样器路的 latent（一采必填、二采可选）归档进**同一张卡片**，卡片标注「仅一采」/「含一采+二采」 |
 | **Dual Clip Picker** (一采+二采) | 与 Picker 相同的三种模式。点一次卡片同时输出 `latent_一采` 与 `latent_二采`（没跑的那条路输出 `None`），另输出 `first_frame`/`tail_frame`/`prompt`/`clip_id`/`project_name` |
-| **Clip Long Builder** | 面板里选项目、点卡片排除。读取项目卡片里已归档的 MP4，按卡片上的镜头序号排序，逐段 ffprobe 预检后拼成一个长视频。只有一个 `video` 输出，节点上直接预览；成品写在 `output/h3_long/<项目>/`，不进卡片库 |
+| **Clip Long Builder** | 面板里选项目、点卡片排除、拖动卡片排序。读取项目卡片里已归档的 MP4，按卡片上的镜头序号（或你拖出来的顺序）排序，逐段 ffprobe 预检后拼成一个长视频。每张卡片显示它的归档视频实测分辨率与时长。只有一个 `video` 输出，节点上直接预览；成品写在 `output/h3_long/<项目>/`，不进卡片库 |
 
 #### Motion-Context（类别 `conditioning/minimax`）
 
@@ -445,19 +453,24 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 - **项目下拉框**只列出真正有归档视频的文件夹，名字后面直接标可用段数。不用手输。
 - **卡片墙**按影片播放顺序列出该项目全部卡片，鼠标停在卡片上就播放它归档的视频。
 - **点卡片 = 不要这一段**——变灰并打上「已排除」，再点一次加回来。废掉的条、分叉的线就是这样跳过的。
-- 摘要行写清将要拼什么（`将拼接 4 段：Shot 1 → Shot 2 → Shot 4`）、排除了什么、哪些没有归档视频。
-- 跑完之后成片在节点上直接播放，面板底部打印成品位置。
+- **把卡片拖到另一张卡片旁边就是改时间轴**——卡片墙的顺序就是成片的顺序，面板会把它写进 `clip_order`。参与拼接的卡片左上角标着它在成片里的位置（`#1`、`#2`…），`↺ 按镜头序号` 一键恢复按序号排。
+- **每张卡片显示归档视频的实测分辨率与时长**（`1088×1920 · 6.21s`）——每个文件只跑一次 ffprobe，结果缓存在卡片里，不是按 latent 估算的。摘要行还会给出成片总时长。
+- 摘要行写清将要拼什么（`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`）、排除了什么、哪些没有归档视频。
+- **卡片大小是 100%–400% 缩放**，与素材库选择器同一档位：只改卡片大小，不改你自己拖出来的节点宽度，并保持你正在看的那几行。`⤢ 适应` 按当前宽度显示两行，其余滚动。
+- **节点保持你给它的大小**：刷新、拖卡片、换项目和重新运行都只重画卡片，不会改节点尺寸；只有 `⤢ 适应` 和缩放按钮会改高度，从没被布局过的新节点在第一次出现卡片时自动适配一次。
+- 跑完之后成片在节点上直接播放，面板底部打印成品位置；`▼ 收起成片` 把这块预览收掉（节点立刻变小，方便调卡片墙），`▶ 展开成片` 再放回来。展开只会回到你收起之前的那个节点高度，反复收起/展开不会越变越长。缩放档位与是否收起都记在本机浏览器里。
 
 **镜头顺序怎么定**
 
-- 按卡片上的镜头序号升序（`Shot 1`、`Shot 2`…）——就是影片生成的顺序。前面几段被删掉的项目，自然从 `Shot 4` 开始。
+- 默认按卡片上的镜头序号升序（`Shot 1`、`Shot 2`…）——就是影片生成的顺序。前面几段被删掉的项目，自然从 `Shot 4` 开始。
+- **拖动过任意一张卡片，卡片墙就改成手动顺序**：`clip_order` 按从上到下保存 `clip_id`，成片照这个顺序播。没被点名的卡片按镜头序号补在后面，所以「拖完之后又生成了新段」不会让新段凭空消失。
 - `Shot 12` 排在 `Shot 2` 之后，不会插在 `Shot 1` 和 `Shot 2` 中间。
 - 没有数字的标签（手写的描述）保持生成顺序，排在带序号的卡片之后。
 - 血缘（`parent_clip_id`）**不**用来定时间轴——它记的是「这一代是从哪张卡片接续来的」，那是另一回事。它留在卡片上给 Picker 用。
 - 序号出现缺口（某条被从库里删了）会写进日志；在面板上点掉一张卡不算缺口。
 - 没有归档视频的卡片会被跳过并在日志里点名。面板把它置灰，也不允许选。
 
-**选项**——全部收在高级开关后面，前两项由面板写入
+**选项**——全部收在高级开关后面，前三项由面板写入
 
 | 选项 | 说明 |
 |------|------|
@@ -465,13 +478,14 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | `join_mode` | **auto**（默认）：各段参数一致时无损直拷 `-c copy`，不一致自动重编码统一。**copy**：只允许直拷，参数不一致直接报错——用于确认过参数一致的项目。**reencode**：一律重编码，把不同分辨率的历史片段强行接在一起就用它。 |
 | `project_name` | 面板的项目下拉框写入。手动填写也可以，填完点「刷新」。 |
 | `exclude_clips` | 面板写入：卡片墙上点掉的 `clip_id`，逗号分隔。手动填写时写镜头标签的一部分也可以。 |
+| `clip_order` | 拖动卡片时由面板写入：按成片播放顺序排列的 `clip_id`，逗号分隔。留空就是按镜头序号；面板上的 `↺ 按镜头序号` 会清掉它。没点名的卡片按序号补在后面；卡片已被删除的 `clip_id` 只告警并跳过。 |
 | `fps` | 只在重编码时生效，应与生成时的帧率一致（24）。 |
 | `output_name` | 可选。默认 `<项目>_<段数>shots_<时间戳>.mp4`。 |
 
 **预检**——写任何东西之前，每一段都先用 ffprobe 实测：
 
 - 分辨率 / 帧率 / 有无音轨 / 采样率不一致 → `auto` 改用重编码并说明是哪一项不一致；`copy` 直接报错并提示改模式。
-- **未裁的接缝**：某段实测视频帧数**没有少于**它的 latent 帧数，说明 pinned 重叠帧还留在视频里，长片在这个接缝处会重复一小段画面。日志会点名这一段——把 Trim 之后的输出重新归档一次再拼。第一段永不告警（它按定义没有重叠）。
+- **未裁的接缝**：某段实测视频帧数**没有少于**它的 latent 帧数，说明 pinned 重叠帧还留在视频里，长片在这个接缝处会重复一小段画面。日志会点名这一段——把 Trim 之后的输出重新归档一次再拼。两种段永不告警：成片的第一段（按定义没有重叠），以及被 Picker 标记为「首段生成」的卡片（`parent_clip_id` 是 `[INITIAL]` / `[INITIAL_GENERATION]`）——首段本来就没有 pinned 重叠帧，视频帧数等于 latent 帧数就是它的正常形态，被拖到成片中间也不需要裁。
 - 帧数一律以 ffprobe 实测为准，不读卡片里的 `meta.frames`（那个是 latent 口径，见下）。
 
 > 卡片上显示的帧数是 **latent 口径**，因为接续消费的就是它。因此重叠帧**不在卡片上加备注**（避免被误读成「当前保存的视频里有重叠」），只在 Long Builder 的日志里说明。
@@ -534,21 +548,25 @@ ComfyUI-H3-ClipStream/
 │   └── H3_Ref2VA_Contextual_LongVideo_ClipStream.json   # 现成示例工作流
 ├── scripts/
 │   └── sync_upstream.sh     # 辅助脚本：跟踪上游 Motion-Context 更新
-├── tests/                   # unittest 套件：python -m unittest discover -s tests -t .
+├── tests/                   # unittest 套件：python -m unittest discover -s tests -t .；JS：node tests/js/
 │   ├── _support.py          # 装载助手：ComfyUI 进 sys.path、clipbin 不依赖 comfy_api
 │   ├── test_node_schema.py  # 锁定 11 个节点的 id、category、输入输出与选项
 │   ├── test_frame_grid.py   # 帧 ↔ latent step 网格不变量
 │   ├── test_latent_codec.py # latent 打包/解包与图像/音频标准化
 │   ├── test_asset_paths.py  # 卡片路径安全与预览 URL
 │   ├── test_clip_bin_store.py # 单卡/双卡往返、索引与删除
-│   ├── test_long_builder.py # 镜头序号排序、拼接方式判定、接缝告警
-│   └── test_projects_api.py # 项目下拉框数据源：只列有归档视频的项目
+│   ├── test_long_builder.py # 镜头序号与手动顺序、拼接方式判定、接缝告警
+│   ├── test_projects_api.py # 项目下拉框数据源、卡片视频参数缓存
+│   ├── js/long_builder_order.test.mjs # 卡片墙顺序（node tests/js/long_builder_order.test.mjs）
+│   └── js/long_builder_fit.test.mjs   # 卡片大小与区域高度（node tests/js/long_builder_fit.test.mjs）
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context 前端
 │   ├── clip_bin_picker.js         # Clip Bin 画廊前端（卡片换行布局）
 │   ├── dom_panel.js               # Picker 使用的 DOM 面板
 │   ├── delete_button.js           # 卡片删除按钮与确认流程
-│   ├── long_builder_panel.js      # Long Builder 面板：项目下拉框 + 卡片墙
+│   ├── long_builder_panel.js      # Long Builder 面板：项目下拉框 + 可拖拽卡片墙
+│   ├── long_builder_order.js      # 卡片墙顺序 = 成片顺序（纯函数，有测试）
+│   ├── long_builder_fit.js        # 卡片档位与卡片墙高度（纯函数，有测试）
 │   ├── clip_bin_picker.css        # 卡片画廊样式（两个面板共用）
 │   └── long_builder.css           # Long Builder 面板外观
 ├── motion_context/

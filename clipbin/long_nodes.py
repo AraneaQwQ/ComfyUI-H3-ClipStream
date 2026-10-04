@@ -1,8 +1,9 @@
 """Clip Bin long-video builder: pick the shots in the panel, get one film back.
 
 The bin already holds every generated segment's video; the missing step is the
-stitching. This node reads the archived videos back in shot-number order and
-writes one long film, so the user no longer has to line the segments up by hand.
+stitching. This node reads the archived videos back in the card order shown on the
+panel and writes one long film, so the user no longer has to line the segments up by
+hand.
 
 It is a read-side node like the Pickers: it never writes into a card, never
 touches a latent, and never re-encodes unless the segments cannot be joined as
@@ -28,9 +29,10 @@ logger = logging.getLogger("minimax_clip_bin_long")
 class MiniMaxClipBinLongBuilderNode(io.ComfyNode):
     """Concatenates the archived videos of a project into one long video.
 
-    Order comes from the shot number on each card (Shot 1, Shot 2, ...), which is
-    the order the film was generated in; the panel lists the cards and one click
-    leaves a take out. Every segment is measured with ffprobe before anything is
+    Order comes from the card deck on the panel: by shot number (Shot 1, Shot 2, ...),
+    which is the order the film was generated in, or in the order the user dragged the
+    cards into. The panel lists the cards, one click leaves a take out, and dragging a
+    card moves it along the timeline. Every segment is measured with ffprobe before anything is
     written, so mismatched resolution, frame rate or audio parameters are reported
     instead of producing a broken film.
     """
@@ -48,6 +50,8 @@ class MiniMaxClipBinLongBuilderNode(io.ComfyNode):
                                 tooltip='【项目库名称】面板上的项目下拉框会写入这里。手动填写也可以，填完点面板的「刷新」再选卡片。'),
                 io.String.Input('exclude_clips', optional=True, advanced=True, default='',
                                 tooltip='【排除的镜头】面板上点掉的卡片会写在这里（clip_id 用逗号分隔）。这些卡片不参与拼接；手动填镜头标签的一部分也可以。'),
+                io.String.Input('clip_order', optional=True, advanced=True, default='',
+                                tooltip='【手动顺序】在面板上拖动卡片排序后自动写入这里（clip_id 用逗号分隔），成片就按这个顺序播放。留空则按镜头序号；没列在这里的卡片仍会按序号补在后面，面板上的「按镜头序号」可以清掉它。'),
                 io.Combo.Input('variant_policy', options=list(VARIANT_POLICIES), advanced=True, default=VARIANT_PREFER_UP,
                                tooltip='【取哪个变体的视频】\n• 优先二采：卡片里有二采视频就用二采，没有则退回一采（推荐）。\n• 仅一采 / 仅二采：只用指定变体；该段没有这个变体时会被跳过并在日志里说明。'),
                 io.Combo.Input('join_mode', options=list(JOIN_MODES), advanced=True, default=JOIN_AUTO,
@@ -66,6 +70,7 @@ class MiniMaxClipBinLongBuilderNode(io.ComfyNode):
     def execute(cls,
                project_name: str = "Default_Project",
                exclude_clips: str = "",
+               clip_order: str = "",
                variant_policy: str = VARIANT_PREFER_UP,
                join_mode: str = JOIN_AUTO,
                fps: float = 24.0,
@@ -74,6 +79,7 @@ class MiniMaxClipBinLongBuilderNode(io.ComfyNode):
         result = build_long_video(
             project_name=project_name,
             exclude_clips=exclude_clips,
+            clip_order=clip_order,
             variant_policy=variant_policy,
             join_mode=join_mode,
             fps=fps,

@@ -3,7 +3,25 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-03 · `03e3124`（当前基线）
+## 2026-10-04 · `f630d44`（当前基线）
+
+- 快照：`archive/2026-10-04-f630d44/`（42 个文件 / 560 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
+- 该基线包含 `v0.7.4` 的全部内容（Clip Bin Picker 项目选单 + 选单内新建/删除项目），且已运行时验证。
+- 本次改动（下一版 `v0.7.5`）：Long Builder 卡片显示真实视频参数，并且卡片可以拖拽排序——
+  - `clipbin/clip_bin_api.py`：新增 `_video_probe_fields()`，按「文件名 + size + mtime」把 ffprobe 结果缓存在卡片 `meta.json` 的 `video_probe` 里（换文件即重测；读不到返回 0 且不缓存，下次请求重试）；列表接口把它平铺成 `video_width/video_height/video_fps/video_frames/video_duration_seconds` 交给前端（加入 `_FRONTEND_ONLY_KEYS`，不写回 meta）。`get_project_clips_api(project_name, variant_policy="", want_probe=False)` 与 `GET /minimax/clip_bin/list?variant_policy=&probe=1` 让卡片显示「这个节点实际会拼的那个文件」的实测参数；`probe=1` 才是「请实测」的开关，Picker 两个参数都不传，因此不会为它不显示的字段付 ffprobe 成本（那里本来已经按卡片测过一次时长）。`probe` 参数改为调用时解析，测试可以替换 `clip_bin_api.probe_video_streams`。
+  - `clipbin/long_builder.py`：`resolve_shot_order(clips, exclude_text, clip_order="")` 支持手动顺序——`clip_order` 用与 `exclude_clips` 相同的引用写法并按从上到下读；没被点名的卡片按镜头序号补在后面（拖完之后新生成的段不会消失）；已删除的引用只告警跳过；重复引用只算一次；被排除的卡片即使被点名也不参与。`build_long_video(..., clip_order=...)` 透传。
+  - `clipbin/long_nodes.py`：新增 `clip_order`（optional + advanced，位置在 `exclude_clips` 之后，已保存工作流的其余参数顺序不变）。
+  - 新增 `web/long_builder_order.js`：「卡片墙顺序 = 成片顺序」的纯函数（`sortCards` / `resolveDeckOrder` / `moveCard` / `shotNumber`），与 `long_builder.py` 同规则，可脱离 ComfyUI 单独测试。
+  - `web/long_builder_panel.js`：卡片显示实测「分辨率 · 时长」（读不到显示 `—`，tooltip 给文件名/帧数/帧率）；列表请求带上本节点的 `variant_policy` 与 `probe=1`；可拼接的卡片 `draggable`，拖到另一张卡片左/右半边即插到其前/后，卡片墙空档投放＝移到末尾，落点用插入线指示，拖完 400ms 内忽略 click（不会误触排除）；新顺序写入 `clip_order` 控件；参与拼接的卡片左上角标 `#1/#2…` 位置；顺序条说明当前是「按镜头序号」还是「手动」，手动时出现 `↺ 按镜头序号` 一键清空；摘要行在全部时长都实测到时给出成片总时长。
+  - `web/long_builder.css`：`.h3-lb-order-bar/-hint/-reset`、`.h3-lb-place`、`.h3-lb-dragging`、`.h3-lb-drop-before::before`、`.h3-lb-drop-after::after`，以及 `prefers-reduced-motion` 下关闭卡片过渡。
+  - `clipbin/long_builder.py` 再加一道首段生成检测：新增 `is_initial_generation()`，`build_long_video` 按卡片 `parent_clip_id` 里的 `[INITIAL]` / `[INITIAL_GENERATION]` 标记给每段打上 `is_initial`；`seam_warnings` 跳过这类段——首段生成没有 pinned 重叠帧，「视频帧数 == latent 帧数」正是它的正常形态，被拖到成片中间也不该报「未裁」。未接血缘（`parent_clip_id` 为空）不算首段，接缝检查保持原样，避免把真的没裁的段放过。新增 `TestInitialGenerationMarker`（5 例）、两个接缝用例与一个端到端用例（首段卡排到第 2 位仍 0 警告）。
+  - 测试 125 → 147（Python），另加 24 个 JS 用例（9 个顺序 + 15 个尺寸）：`tests/test_long_builder.py::TestManualCardOrder` + 端到端「拖出来的顺序就是拼的顺序」；`tests/test_projects_api.py::TestCardVideoProbe`（首次实测、缓存命中不再跑 ffprobe、文件被替换后重测、无归档视频返回 0 且不缓存、`variant_policy` 决定测哪个变体、不请求实测时完全不跑 ffprobe 也不返回这些字段）；`tests/test_node_schema.py` 输入表加入 `clip_order`；`tests/js/long_builder_order.test.mjs`（9 例）、`tests/js/long_builder_fit.test.mjs`（15 例）。
+- 卡片缩放与节点尺寸（前端）：新增 `web/long_builder_fit.js` 把「卡片多大、要多大的区域才放得下」从 DOM 里拆成纯函数。规则改为**缩放只改卡片，不改节点宽度**：`planZoomHeight()` 先按旧行数（`visibleRows()` 只数整行）再按新行高还原同样的行数，超过视口就夹住但永远保留一整行；`⤢ 适应` 走 `planFitHeight()`，按当前宽度排到最多 `MAX_ROWS=2` 行、其余滚动；删掉旧的 `planDeck()` / `MAX_COLUMNS`（它同时改宽度，是「点放大就排成一行」的根因）。`web/long_builder_panel.js` 相应改成 `deckGeometry()` / `applyHeight()`（只 `setSize([当前宽, 新高度])`）/ `zoomFit()`，缩放按钮在改 CSS 变量前先取几何。
+- 刷新不再把节点越缩越小（用户实测反馈）：卡片墙是 `flex: 1 1 0`，而面板 DOM widget 有自己的 `getMinHeight`，节点一旦比面板下限还小，卡片墙就不再跟着节点缩小——「按增量再要一次高度」于是每次刷新都少一点，直到撞上 `min_size`。修法：`applyHeight()` 先把目标高度夹到 `nodeChromeHeight() + PANEL_MIN_HEIGHT`（`PANEL_MIN_HEIGHT` 同一个数字也喂给 `addPanel`，两处不再各写一份），`sizeDeckTo()` 改成「要一个高度 → 下一帧复测 → 误差 >8px 再修一次，最多两轮；卡片墙根本没动说明已到下限，停」；`planFitHeight()` / `planZoomHeight()` 新增 `padV`（`DECK_PAD_V = 14`，即 `clip_bin_picker.css` 的 `padding: 4px 2px 10px 2px`），规划的是卡片墙的外框高度，不再永远差 14px。自动适配改成 `fitOnce()`：一个节点只在第一次出现卡片时布局一次，`loadCards()`（刷新按钮、换项目、拖卡片、改变体、后台变更事件）不再改节点尺寸，只有 `⤢ 适应` 与 `+/−` 会。JS 用例 13 → 15（`padV` 两条）。
+- 成片预览可收起：ComfyUI 0.38 把成片预览做成 `type="video"` 的 DOM widget，`widget.hidden` 会被 `getLayoutWidgets()` / `isWidgetVisible()` 跳过，所以面板的 `▼ 收起成片` / `▶ 展开成片` 把它从布局里摘掉（不是留一条空白），节点因此能缩得很小；展开时按实测高度（`computedHeight` / 元素高度）把空间还回去。面板在 `addDOMWidget` 上包一层，捕获 ComfyUI 新建的预览 widget 并套用用户上次的选择；档位与收起状态存在 `localStorage`（`h3.clipstream.longBuilder.filmPreview`）。`web/long_builder.css` 的 footer 改成一行（`.h3-lb-footer-text` + `.h3-lb-film-toggle`，未运行时禁用）。
+- 展开成片不再把节点越加越长（用户实测反馈，第二次修复才找对原因）：litegraph 的 `LGraphNode._arrangeWidgets()` 把节点剩余空间用 `distributeSpace()` **平均分给所有可增长 widget**——面板的 `getMaxHeight` 未定义 → `maxSize = Infinity`，成片预览的 DOM widget 同样无上限——所以预览自己就会占走一半空间，而「占多少」又随节点高度一起长。旧代码在此之上再 `applyHeight(+实测预览高度)` 是第二次加，于是每次展开净增一段且永远不收敛。改成**绝对还原**：收起时记下当前节点高度（`heightWithFilm`），展开时 `applyHeight(heightWithFilm)`，只做还原不做加法；重载后恢复「收起」状态时也记一次，所以从历史记录里展开同样回到原高度。收起仍按实测的预览高度还空间（这一步本来就是对的：预览消失后面板独占剩余空间，卡片墙高度不变）。另：`sizeDeckTo()` 收敛轮数 2 → 4——预览在场时每轮只能补上一半误差，四轮内收敛到 ≤8px。
+- 运行时验证：已把改动的运行时文件覆盖到 `E:\ai\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-H3-ClipStream\` 并逐文件哈希核对（开发副本与运行副本全部运行时文件无差异）。用户实测确认卡片显示分辨率/时长、拖拽排序、首段生成不再报接缝告警、卡片缩放 100%–400% 与换行、成片预览收起/展开、刷新不再把节点缩到最小、展开成片不再累积增高均正常 → **`v0.7.5` 运行时验证通过**，不需要回退。
+## 2026-10-03 · `03e3124`（上一基线）
 
 - 快照：`archive/2026-10-03-03e3124/`（42 个文件 / 530 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.3` 的全部内容（Long Builder 面板化 + 按镜头序号定序），且已运行时验证。
@@ -77,17 +95,19 @@ git merge-base --is-ancestor v0.7.0 HEAD   # 退出码 0 = 可达
 cd C:\Users\az\Documents\Codex\projects\ComfyUI-H3-ClipStream
 $env:COMFYUI_ROOT = 'E:\ai\ComfyUI-aki-v3\ComfyUI'
 & 'E:\ai\ComfyUI-aki-v3\python\python.exe' -m unittest discover -s tests -t .
+node tests/js/long_builder_order.test.mjs   # 前端卡片墙顺序（纯函数，不需要 ComfyUI）
 ```
 
-- 当前结果：`Ran 125 tests ... OK (skipped=1)`（61 → 96 → 112 → 119 → 125：`tests/test_long_builder.py` 重写定序用例，`tests/test_projects_api.py` 覆盖项目列表、新建与删除）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
+- 当前结果：`Ran 147 tests ... OK (skipped=1)` + `# pass 9`（JS）（61 → 96 → 112 → 119 → 125 → 147：新增手动顺序与卡片视频参数探测用例；前端顺序规则在 `tests/js/long_builder_order.test.mjs`，用 node 跑）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
 - `COMFYUI_ROOT` 只在 schema 测试里必需；从 `custom_nodes` 下运行时会自动推断根目录。
 - 覆盖范围：
   - `tests/test_frame_grid.py`：像素帧 ↔ latent step 往返、`VIDEO_RUN_GRID` 每点可达、`context_length` 只落在整 step 上、clipbin 与 motion_context 两套帧数口径一致。
   - `tests/test_latent_codec.py`：`_unpack_latent` / `_pack_latent` / `_standardize_image_tensor` / `_standardize_audio_dict` 的容器形状与不改动源对象。
   - `tests/test_asset_paths.py`：`checked_asset_dir` 拒绝越界 id、嵌套项目目录和符号链接卡片；预览 URL 随卡片重写而变。
   - `tests/test_clip_bin_store.py`：单卡与双卡存取往返、项目索引排序与丢失后重建、删除语义、shot tag slug 与唯一性、Auto tag 按项目递增。
-  - `tests/test_long_builder.py`：镜头序号升序定序（`Shot 12` 排在 `Shot 2` 之后）、无数字标签按 `created_at` 排在带序号卡片之后、`exclude_clips` 按 `clip_id` 或镜头标签片段排除、序号缺口告警、缺归档视频只告警不报错、preview 的 filename/subfolder 可寻址、变体选择策略、ffprobe JSON 解析与帧率分数解析、`classify_join` 的分辨率/帧率/音轨/采样率判定、`seam_warnings` 的未裁接缝判定（首段永不告警）、concat list 转义，以及 `MiniMaxClipBinLongBuilder` 的端到端装配（用假 ffmpeg/ffprobe）。
-  - `tests/test_projects_api.py`：`list_projects_api()` 列出全部项目及其卡片数/视频数，`videos_only=True` 只留能成片的库；`create_project()` 新建空库、同名幂等、返回清洗后的文件夹名、空名与超长名报错；`delete_project()` 删除整库（含视频）、`confirm` 不匹配报错、库已不存在时返回 `deleted: False` 且不建幽灵目录。
+  - `tests/test_long_builder.py`：镜头序号升序定序（`Shot 12` 排在 `Shot 2` 之后）、无数字标签按 `created_at` 排在带序号卡片之后、`exclude_clips` 按 `clip_id` 或镜头标签片段排除、序号缺口告警、缺归档视频只告警不报错、preview 的 filename/subfolder 可寻址、变体选择策略、ffprobe JSON 解析与帧率分数解析、`classify_join` 的分辨率/帧率/音轨/采样率判定、`seam_warnings` 的未裁接缝判定（成片首段与首段生成卡片永不告警）、concat list 转义，以及 `MiniMaxClipBinLongBuilder` 的端到端装配（用假 ffmpeg/ffprobe）；`TestManualCardOrder` 锁定 `clip_order`：手动顺序优先、未点名的按序号追加、已删除引用只告警、重复引用只算一次、被排除的卡片不因为被点名就回来，端到端用例断言 ffmpeg 收到的文件顺序就是拖出来的顺序；`TestInitialGenerationMarker` 与 `TestSeamWarnings` 的新用例锁定「首段生成」不被误报为未裁，而未接血缘的中间段照旧判定。
+  - `tests/test_projects_api.py`：`list_projects_api()` 列出全部项目及其卡片数/视频数，`videos_only=True` 只留能成片的库；`create_project()` 新建空库、同名幂等、返回清洗后的文件夹名、空名与超长名报错；`delete_project()` 删除整库（含视频）、`confirm` 不匹配报错、库已不存在时返回 `deleted: False` 且不建幽灵目录；`TestCardVideoProbe` 用假 probe 锁定卡片视频参数的测量与缓存（每个文件只测一次、size/mtime 变了重测、无视频不缓存）以及 `variant_policy` 决定测哪个变体。
+- `tests/js/long_builder_order.test.mjs`：`node tests/js/long_builder_order.test.mjs`。锁定前端与后端同规则：默认按镜头序号、`Shot 12` 在 `Shot 2` 之后、手动顺序优先且未点名的按序号追加、不能拼接的卡片排在最后且不进 `joinIds`、`deck` 前 N 张就是 `joinIds`（面板的位置角标依赖这条不变量）、`moveCard` 的前后插入与「拖到自己/未知卡片上 = 不变」。
   - `tests/test_node_schema.py`：锁定 11 个节点的 id / category / 输入 id 与 optional / 输出 display_name 顺序 / Picker mode 选项 / `context_length` 选项 / `is_output_node` / Long Builder 输入全部 advanced 且只有一个 `video` 输出，并校验 `H3ClipStreamExtension().get_node_list()` 返回同一批。
 - 升级节点或改动 schema 时，`test_node_schema.py` 会失败——那是有意的：先改测试再改实现，README 的节点表同步更新。
 
@@ -104,4 +124,5 @@ $env:COMFYUI_ROOT = 'E:\ai\ComfyUI-aki-v3\ComfyUI'
 - 2026-10-03：`v0.7.2` → `fffdee0`。
 - 2026-10-03：`v0.7.3` 运行时验证通过；记录「混合帧率不修」的判定（MiniMax H3 归档视频恒为 24fps），代码未改。
 - 2026-10-03：Clip Bin Picker 项目选单（`web/clip_bin_picker.js`）+ 选单内新建项目：`clipbin/clip_bin_manager.py::create_project`、`clipbin/clip_bin_api.py` 的 `list_projects_api(videos_only)` 与 `POST /minimax/clip_bin/project`、`_csrf_block()` 抽取；下拉框样式合并进 `web/clip_bin_picker.css`；Long Builder 面板改用 `?videos_only=1`；README 中英文新增「项目选单 / Project menu」章节；测试 112 → 119。
+- 2026-10-04：Long Builder 卡片显示真实视频参数 + 拖拽排序（`v0.7.5`）——`clipbin/clip_bin_api.py` 新增 `_video_probe_fields()` 与 `video_probe` 缓存、`get_project_clips_api` 接受 `variant_policy` 与 `probe=1` 门控；`clipbin/long_builder.py::resolve_shot_order` 与 `clipbin/long_nodes.py` 新增 `clip_order`；新增 `web/long_builder_order.js`，`web/long_builder_panel.js` 显示实测分辨率/时长并支持拖拽重排，`web/long_builder.css` 加拖拽与位置样式；测试 125 → 139，新增 `tests/js/long_builder_order.test.mjs`（9 用例）；README 中英文「长视频拼接」章节同步。同日再修 `clipbin/long_builder.py`：`seam_warnings` 增加首段生成检测（`is_initial_generation` / `is_initial`），首段卡片不再被误报为「未裁接缝」，测试 139 → 147。
 - 2026-10-03：Long Builder 简化（`v0.7.3`）——`clipbin/long_builder.py` 改按镜头序号定序（新增 `shot_number` / `shot_sort_key` / `numbering_gaps` / `resolve_shot_order`，删除血缘回溯与 `MAX_CHAIN` / `INITIAL_MARKERS`）；`clipbin/long_nodes.py` 输入全 advanced、输出单个 `video` 并内联预览；`clipbin/clip_bin_api.py` 新增 `list_video_projects_api` 与 `GET /minimax/clip_bin/projects`；新增 `web/long_builder_panel.js`、`web/long_builder.css`；README 中英文「长视频拼接」章节同步（面板、序号定序、选项表、日志取代 report）。
