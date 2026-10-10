@@ -3,8 +3,8 @@
 // The node needs a project name, the list of switched-off cards and the card order, so
 // this panel is a view over the same widgets the Clip Bin Picker uses:
 // - a project dropdown fed by /minimax/clip_bin/projects (bins with archived video only)
-// - a card deck whose order is the order of the film: one click leaves a take out,
-//   dragging a card moves it along the timeline
+// - a card deck whose order is the order of the film: the button on a card leaves a take
+//   out of the film, dragging a card moves it along the timeline
 // - the resolution and duration measured from the archived video, not from the latent
 // - a summary line that says exactly what will be joined, and why anything is skipped
 // - a node that keeps the size you gave it: zoom changes the cards, and a refresh never
@@ -445,6 +445,16 @@ function setupLongBuilderPanel(node) {
         node.setDirtyCanvas?.(true, true);
     }
 
+    // One click puts every switched-off card back. The order widget is left alone, so a
+    // hand-dragged film keeps its shape and only the exclusions disappear.
+    function restoreAll() {
+        if (!excludeWidget) return;
+        excludeWidget.value = "";
+        excludeWidget.callback?.("");
+        node.setDirtyCanvas?.(true, true);
+        loadCards();
+    }
+
     // The whole point of the drag: the card order becomes the node input.
     function setOrder(ids) {
         if (!orderWidget) return;
@@ -494,7 +504,6 @@ function setupLongBuilderPanel(node) {
             : "没有可拼接的片段：卡片全被排除，或都没有归档视频");
         const usable = cards.filter(card => card.has_video);
         const offCount = usable.length - joined.length;
-        if (offCount) lines.push(`已排除 ${offCount} 段（点卡片可加回来）`);
         const noVideo = cards.filter(card => !card.has_video);
         if (noVideo.length) {
             lines.push(`⚠ ${noVideo.length} 段没有归档视频，会自动跳过：${noVideo.map(card => card.shot_tag || card.clip_id).slice(0, 6).join("、")}`);
@@ -509,6 +518,25 @@ function setupLongBuilderPanel(node) {
             if (holes.length) lines.push("⚠ 库里没有 " + holes.join("、") + " 这段卡片");
         }
         summary.innerHTML = lines.map(line => `<div>${line}</div>`).join("");
+        // Saying "you can add them back" is not a way to do it: the row carries the button.
+        if (offCount) {
+            const row = document.createElement("div");
+            row.className = "h3-lb-restore-row";
+            const note = document.createElement("span");
+            note.textContent = `已排除 ${offCount} 段，排在卡片墙最后`;
+            row.appendChild(note);
+            const restore = document.createElement("button");
+            restore.type = "button";
+            restore.className = "h3-lb-restore-all";
+            restore.textContent = "↺ 全部加回";
+            restore.title = "清空排除列表，所有有归档视频的卡片重新进入成片";
+            restore.onclick = (e) => {
+                e.stopPropagation();
+                restoreAll();
+            };
+            row.appendChild(restore);
+            summary.appendChild(row);
+        }
     }
 
     function showOrderMode(isManual) {
@@ -558,10 +586,9 @@ function setupLongBuilderPanel(node) {
                 return;
             }
 
-            // One drag at a time. suppressClickUntil stops the drop from also reading
-            // as a click, which would switch the card off.
+            // One drag at a time. The card itself is not clickable any more, so a drop can
+            // never double as a switch; only the button on the card changes the film.
             let dragId = null;
-            let suppressClickUntil = 0;
             const clearMarkers = () => {
                 for (const el of deck.querySelectorAll(".h3-lb-drop-before, .h3-lb-drop-after")) {
                     el.classList.remove("h3-lb-drop-before", "h3-lb-drop-after");
@@ -673,12 +700,30 @@ function setupLongBuilderPanel(node) {
                         + (card.video_fps || "?") + " fps（已按归档视频实测）"
                     : "没有归档视频，读不到分辨率和时长";
                 body.appendChild(metrics);
+                // The switch is a labelled button on the card, not a click anywhere on it.
+                // Aiming at the metrics line used to take a segment out of the film, and a
+                // drag could land as a click; a button also gives the hit area real size,
+                // which matters on a 9:16 card.
+                if (card.has_video) {
+                    const toggle = document.createElement("button");
+                    toggle.type = "button";
+                    toggle.className = "h3-lb-join-toggle" + (off ? " h3-lb-join-off" : "");
+                    toggle.textContent = off ? "↺ 加入成片" : "⊘ 移出成片";
+                    toggle.title = off
+                        ? "重新参与拼接：手动排过序会回到原来的位置，否则排在成片末尾"
+                        : "这一段不进成片：卡片会移到卡片墙最后，随时可以加回来";
+                    toggle.onclick = (e) => {
+                        e.stopPropagation();
+                        setExcluded(card.clip_id, !off);
+                        loadCards();
+                    };
+                    body.appendChild(toggle);
+                }
                 item.appendChild(body);
                 if (joinable) {
                     item.draggable = true;
                     item.addEventListener("dragstart", event => {
                         dragId = String(card.clip_id);
-                        suppressClickUntil = Date.now() + 400;
                         item.classList.add("h3-lb-dragging");
                         if (event.dataTransfer) {
                             event.dataTransfer.effectAllowed = "move";
@@ -712,13 +757,6 @@ function setupLongBuilderPanel(node) {
                     });
                 }
 
-                if (card.has_video) {
-                    item.onclick = () => {
-                        if (Date.now() < suppressClickUntil) return;
-                        setExcluded(card.clip_id, !off);
-                        loadCards();
-                    };
-                }
                 deck.appendChild(item);
             });
             fitOnce();

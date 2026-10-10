@@ -28,9 +28,12 @@ export function zoomPercent(index) { return Math.round(zoomFor(index) * 100); }
 export function cardMinFor(index) { return Math.round(BASE_CARD_MIN * zoomFor(index)); }
 export function thumbHeightFor(index) { return Math.round(BASE_THUMB_H * zoomFor(index)); }
 
-// A card is its thumbnail plus the two lines under it. The panel measures the real
-// height and only falls back to this estimate.
-export function rowHeightFor(index) { return thumbHeightFor(index) + 62; }
+// A card is its thumbnail plus the lines under it: the shot name, the measured video
+// spec, and the button that puts the segment in or out of the film. The panel measures the
+// real height and only falls back to this estimate, so the estimate has to grow whenever
+// the card body grows - that is what CARD_BODY_H is for.
+export const CARD_BODY_H = 86; // px at 100%: name + spec + the join/skip button
+export function rowHeightFor(index) { return thumbHeightFor(index) + CARD_BODY_H; }
 
 // repeat(auto-fill, minmax(cardMin, 1fr)): how many columns a width of this size shows.
 export function columnsFor(width, cardMin, gap = DECK_GAP) {

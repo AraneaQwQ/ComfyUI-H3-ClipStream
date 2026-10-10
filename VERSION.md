@@ -3,7 +3,18 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-04 · `f630d44`（当前基线）
+## 2026-10-11 · `ccb80ac`（当前基线）
+
+- 快照：`archive/2026-10-11-ccb80ac/`（46 个文件 / 637 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
+- 该基线包含 `v0.7.5` 的全部内容（Long Builder 卡片实测参数 + 拖拽排序 + 节点尺寸不漂移 + 首段生成不再误报接缝），且已运行时验证。
+- 本次改动（下一版 `v0.7.6`）：Long Builder 的卡片屏蔽改成「卡片上的按钮」，并加一键全部加回——
+  - `web/long_builder_panel.js`：卡片体新增一行开关按钮 `.h3-lb-join-toggle`（在片 = `⊘ 移出成片`，已排除 = `↺ 加入成片`），并删掉整张卡片的 `item.onclick`。原因：卡片本身可拖拽排序，「点卡片 = 排除」和拖拽抢同一批像素，鼠标想读参数就误改一次成片；按钮同时给出可用的命中面积（9:16 竖屏卡片上尤其重要）。摘要行不再只写「点卡片可加回来」，改成带 `↺ 全部加回` 按钮（`restoreAll()` 只清空 `exclude_clips`，不动 `clip_order`，手动排好的顺序保持不变）。
+  - `web/long_builder.css`：`.h3-lb-off` 只压暗缩略图——原来整卡 `opacity: .45` 会把「加回来」的按钮一起压掉，读不清；新增 `.h3-lb-join-toggle` / `.h3-lb-join-off` / `.h3-lb-restore-row` / `.h3-lb-restore-all`；`.h3-lb-container .h3-lb-card { cursor: default }`（可拖拽卡片的 `grab` 仍由后面的规则给出）；`.h3-lb-container .minimax-clip-body { padding-right: 8px }`——共享样式的 38px 右内边距是给素材库卡片右下角的删除按钮留的，Long Builder 卡片没有那个按钮，那 30 像素是白丢的宽度。
+  - `web/long_builder_fit.js`：`rowHeightFor()` 里写死的 `+ 62` 抽成 `CARD_BODY_H = 86`。卡片体现在是三行（镜头名 / 实测参数 / 开关按钮），估算不跟着长，`⤢ 适应` 与缩放就会按两行的旧高度少算一行——面板虽然实测真实高度，但实测读不到时用的就是这个估算。
+  - 测试：JS 24 → 25（`tests/js/long_builder_fit.test.mjs` 新增「行高估算覆盖整张卡片体」，锁 `rowHeightFor == thumbHeightFor + CARD_BODY_H` 且 `CARD_BODY_H > 62`）。本次只改前端，Python 147 用例仍 `OK (skipped=1)`。
+- 运行时验证：待用户实测。只改前端 → 覆盖运行副本 + 浏览器 Ctrl+F5，不需要重启 ComfyUI。
+
+## 2026-10-04 · `f630d44`（上一基线）
 
 - 快照：`archive/2026-10-04-f630d44/`（42 个文件 / 560 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.4` 的全部内容（Clip Bin Picker 项目选单 + 选单内新建/删除项目），且已运行时验证。
@@ -78,6 +89,8 @@
 | `v0.7.2` | `fffdee0` | 长视频拼接节点 `MiniMaxClipBinLongBuilder`（第 11 个节点） |
 | `v0.7.3` | `5c7330d` | Long Builder 面板化 + 按镜头序号定序（去掉血缘回溯、多余输入与输出接口）。运行时已验证：用户覆盖运行副本后确认面板、`/minimax/clip_bin/projects` 与节点内联预览正常（单元 112 用例 + 真 ffmpeg/ffprobe 冒烟亦通过） |
 | `v0.7.4` | `2b46aa2` | Clip Bin Picker 项目选单 + 选单内新建/删除项目（`create_project`、`delete_project`、`POST /minimax/clip_bin/project[/delete]`、`?videos_only=1`） |
+| `v0.7.5` | `ccb80ac` | Long Builder 卡片实测分辨率/时长 + 拖拽排序 + 首段生成不再误报接缝 + 卡片缩放换行与节点尺寸不漂移。运行时已验证 |
+| `v0.7.6` | 待提交 | Long Builder 卡片屏蔽改成卡片上的按钮（`⊘ 移出成片` / `↺ 加入成片`）+ 摘要行 `↺ 全部加回`；只改前端 |
 
 打 tag 与校验：
 
@@ -96,9 +109,10 @@ cd C:\Users\az\Documents\Codex\projects\ComfyUI-H3-ClipStream
 $env:COMFYUI_ROOT = 'E:\ai\ComfyUI-aki-v3\ComfyUI'
 & 'E:\ai\ComfyUI-aki-v3\python\python.exe' -m unittest discover -s tests -t .
 node tests/js/long_builder_order.test.mjs   # 前端卡片墙顺序（纯函数，不需要 ComfyUI）
+node tests/js/long_builder_fit.test.mjs     # 前端卡片大小与区域高度（同上）
 ```
 
-- 当前结果：`Ran 147 tests ... OK (skipped=1)` + `# pass 9`（JS）（61 → 96 → 112 → 119 → 125 → 147：新增手动顺序与卡片视频参数探测用例；前端顺序规则在 `tests/js/long_builder_order.test.mjs`，用 node 跑）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
+- 当前结果：`Ran 147 tests ... OK (skipped=1)` + `# pass 9` + `# pass 16`（JS 共 25 项）（61 → 96 → 112 → 119 → 125 → 147：新增手动顺序与卡片视频参数探测用例；前端规则在 `tests/js/` 下两个文件，用 node 跑）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
 - `COMFYUI_ROOT` 只在 schema 测试里必需；从 `custom_nodes` 下运行时会自动推断根目录。
 - 覆盖范围：
   - `tests/test_frame_grid.py`：像素帧 ↔ latent step 往返、`VIDEO_RUN_GRID` 每点可达、`context_length` 只落在整 step 上、clipbin 与 motion_context 两套帧数口径一致。
@@ -125,4 +139,5 @@ node tests/js/long_builder_order.test.mjs   # 前端卡片墙顺序（纯函数�
 - 2026-10-03：`v0.7.3` 运行时验证通过；记录「混合帧率不修」的判定（MiniMax H3 归档视频恒为 24fps），代码未改。
 - 2026-10-03：Clip Bin Picker 项目选单（`web/clip_bin_picker.js`）+ 选单内新建项目：`clipbin/clip_bin_manager.py::create_project`、`clipbin/clip_bin_api.py` 的 `list_projects_api(videos_only)` 与 `POST /minimax/clip_bin/project`、`_csrf_block()` 抽取；下拉框样式合并进 `web/clip_bin_picker.css`；Long Builder 面板改用 `?videos_only=1`；README 中英文新增「项目选单 / Project menu」章节；测试 112 → 119。
 - 2026-10-04：Long Builder 卡片显示真实视频参数 + 拖拽排序（`v0.7.5`）——`clipbin/clip_bin_api.py` 新增 `_video_probe_fields()` 与 `video_probe` 缓存、`get_project_clips_api` 接受 `variant_policy` 与 `probe=1` 门控；`clipbin/long_builder.py::resolve_shot_order` 与 `clipbin/long_nodes.py` 新增 `clip_order`；新增 `web/long_builder_order.js`，`web/long_builder_panel.js` 显示实测分辨率/时长并支持拖拽重排，`web/long_builder.css` 加拖拽与位置样式；测试 125 → 139，新增 `tests/js/long_builder_order.test.mjs`（9 用例）；README 中英文「长视频拼接」章节同步。同日再修 `clipbin/long_builder.py`：`seam_warnings` 增加首段生成检测（`is_initial_generation` / `is_initial`），首段卡片不再被误报为「未裁接缝」，测试 139 → 147。
+- 2026-10-11：Long Builder 卡片屏蔽改成卡片上的按钮（`v0.7.6`）——`web/long_builder_panel.js` 卡片体加 `.h3-lb-join-toggle`、去掉整卡 `item.onclick`（与拖拽抢事件）、摘要行加 `↺ 全部加回`（`restoreAll()` 只清 `exclude_clips`）；`web/long_builder.css` 只压暗缩略图并补按钮/恢复行样式与 `cursor: default`；`web/long_builder_fit.js` 的行高估算 `+62` → `CARD_BODY_H = 86`；JS 测试 24 → 25；README 中英文同步。
 - 2026-10-03：Long Builder 简化（`v0.7.3`）——`clipbin/long_builder.py` 改按镜头序号定序（新增 `shot_number` / `shot_sort_key` / `numbering_gaps` / `resolve_shot_order`，删除血缘回溯与 `MAX_CHAIN` / `INITIAL_MARKERS`）；`clipbin/long_nodes.py` 输入全 advanced、输出单个 `video` 并内联预览；`clipbin/clip_bin_api.py` 新增 `list_video_projects_api` 与 `GET /minimax/clip_bin/projects`；新增 `web/long_builder_panel.js`、`web/long_builder.css`；README 中英文「长视频拼接」章节同步（面板、序号定序、选项表、日志取代 report）。

@@ -9,6 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+    CARD_BODY_H,
     DECK_PAD_V,
     MAX_ROWS,
     cardMinFor,
@@ -139,6 +140,15 @@ test("padding is capped by the screen, but a padded row still survives", () => {
         deckHeight: 150, rowHeightBefore: 150, rowHeightAfter: 300,
         padV: DECK_PAD_V, ...chrome, ...tiny,
     }), heightForRowCount(1, 300) + DECK_PAD_V, "one whole card, padding included");
+});
+
+test("the row estimate covers the whole card body, including the join/skip button", () => {
+    for (let i = 0; i < 5; i++) {
+        assert.equal(rowHeightFor(i), thumbHeightFor(i) + CARD_BODY_H);
+    }
+    // The body is three lines now: shot name, measured spec, and the button. An estimate
+    // that still fits the old two-line body under-plans every fit and the deck scrolls.
+    assert.ok(CARD_BODY_H > 62, "CARD_BODY_H has to cover the button row as well");
 });
 
 test("the row height falls back to the zoom, not to a fixed size", () => {

@@ -162,10 +162,10 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 
 - A **project dropdown** lists only the folders that hold archived video, with the number of usable segments next to each name. Nothing to type.
 - A **card deck** shows every card in that project, ordered the way the film plays; hover a card to play its archived video.
-- **Click a card to leave it out** — it greys out with an 已排除 badge, click again to put it back. This is how a rejected take or a branch is skipped.
+- **The button on the card is the switch** — `⊘ 移出成片` takes that segment out of the film, the picture dims, the card moves to the back of the deck with an 已排除 badge, and the button becomes `↺ 加入成片`. This is how a rejected take or a branch is skipped. The card itself is not clickable, so pointing at a card can never change the film by accident.
 - **Drag a card onto another to move it along the timeline** — the deck order *is* the film order, and the panel writes it into `clip_order`. Every joining card carries its position in the film (`#1`, `#2`, …), and `↺ 按镜头序号` puts the deck back on shot numbers.
 - **Each card shows the resolution and duration of its archived video** (`1088×1920 · 6.21s`) — measured with ffprobe once per file and cached in the card, never estimated from the latent. The summary line adds the total length of the film.
-- The summary line says exactly what will be joined (`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`), what is excluded, and what has no archived video.
+- The summary line says exactly what will be joined (`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`), what is excluded, and what has no archived video. While cards are switched off, that line carries a `↺ 全部加回` button.
 - **Card size is a 100%–400% zoom**, the same steps as the Clip Bin picker. It changes the cards only: the width you gave the node is never touched, and the rows you were looking at stay on screen. `⤢ 适应` sets the height to two rows at the current width and the rest scrolls.
 - **The node keeps the size you gave it.** Refresh, re-ordering, switching project and a new run redraw the cards but never resize the node — only `⤢ 适应` and the zoom buttons change its height, and a node that has never been sized is fitted once when it first gets cards.
 - After a run the finished film plays inline on the node and the panel prints where it was written. `▼ 收起成片` puts that preview away — the node becomes compact while the cards are being arranged — and `▶ 展开成片` gives the room back. Expanding goes back to exactly the height the node had before you collapsed it, so toggling never makes the node creep taller. Both the zoom and the preview choice are remembered in this browser.
@@ -357,7 +357,7 @@ Dual Clip Picker ──► latent_一采 ─► Motion Context（一采路）. c
                  └► latent_二采 ─► Motion Context（二采路）. context_latent
 
 [长片]
-  Clip Long Builder （面板：选项目 → 点卡片排除；顺序 = 卡片上的镜头序号）
+  Clip Long Builder （面板：选项目 → 卡片上的按钮排除；顺序 = 卡片上的镜头序号）
     → 逐段 ffprobe 预检 → ffmpeg 拼接
     → output/h3_long/<项目>/<文件名>.mp4   （不写回卡片库）
 ```
@@ -396,7 +396,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | **Clip Bin Picker** | 可视化卡片画廊。三种模式：**Auto** / **Force Initial** / **Strict Chaining**。输出 `latent`、`tail_frame`、`first_frame`、`prompt`、`clip_id`、`project_name` |
 | **Dual Clip Saver** (一采+二采) | 把两条采样器路的 latent（一采必填、二采可选）归档进**同一张卡片**，卡片标注「仅一采」/「含一采+二采」 |
 | **Dual Clip Picker** (一采+二采) | 与 Picker 相同的三种模式。点一次卡片同时输出 `latent_一采` 与 `latent_二采`（没跑的那条路输出 `None`），另输出 `first_frame`/`tail_frame`/`prompt`/`clip_id`/`project_name` |
-| **Clip Long Builder** | 面板里选项目、点卡片排除、拖动卡片排序。读取项目卡片里已归档的 MP4，按卡片上的镜头序号（或你拖出来的顺序）排序，逐段 ffprobe 预检后拼成一个长视频。每张卡片显示它的归档视频实测分辨率与时长。只有一个 `video` 输出，节点上直接预览；成品写在 `output/h3_long/<项目>/`，不进卡片库 |
+| **Clip Long Builder** | 面板里选项目、用卡片上的按钮排除、拖动卡片排序。读取项目卡片里已归档的 MP4，按卡片上的镜头序号（或你拖出来的顺序）排序，逐段 ffprobe 预检后拼成一个长视频。每张卡片显示它的归档视频实测分辨率与时长。只有一个 `video` 输出，节点上直接预览；成品写在 `output/h3_long/<项目>/`，不进卡片库 |
 
 #### Motion-Context（类别 `conditioning/minimax`）
 
@@ -452,10 +452,10 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 
 - **项目下拉框**只列出真正有归档视频的文件夹，名字后面直接标可用段数。不用手输。
 - **卡片墙**按影片播放顺序列出该项目全部卡片，鼠标停在卡片上就播放它归档的视频。
-- **点卡片 = 不要这一段**——变灰并打上「已排除」，再点一次加回来。废掉的条、分叉的线就是这样跳过的。
+- **卡片上的按钮就是开关**——`⊘ 移出成片` 把这一段移出成片：画面变灰、卡片移到卡片墙最后并打上「已排除」，按钮同时变成 `↺ 加入成片`，点一下它就回来。废掉的条、分叉的线就是这样跳过的。卡片本身不再可点，鼠标划过卡片不会误改成片。
 - **把卡片拖到另一张卡片旁边就是改时间轴**——卡片墙的顺序就是成片的顺序，面板会把它写进 `clip_order`。参与拼接的卡片左上角标着它在成片里的位置（`#1`、`#2`…），`↺ 按镜头序号` 一键恢复按序号排。
 - **每张卡片显示归档视频的实测分辨率与时长**（`1088×1920 · 6.21s`）——每个文件只跑一次 ffprobe，结果缓存在卡片里，不是按 latent 估算的。摘要行还会给出成片总时长。
-- 摘要行写清将要拼什么（`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`）、排除了什么、哪些没有归档视频。
+- 摘要行写清将要拼什么（`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`）、排除了什么、哪些没有归档视频；有卡片被排除时，这一行带一个 `↺ 全部加回` 按钮，一键把整批卡片放回成片。
 - **卡片大小是 100%–400% 缩放**，与素材库选择器同一档位：只改卡片大小，不改你自己拖出来的节点宽度，并保持你正在看的那几行。`⤢ 适应` 按当前宽度显示两行，其余滚动。
 - **节点保持你给它的大小**：刷新、拖卡片、换项目和重新运行都只重画卡片，不会改节点尺寸；只有 `⤢ 适应` 和缩放按钮会改高度，从没被布局过的新节点在第一次出现卡片时自动适配一次。
 - 跑完之后成片在节点上直接播放，面板底部打印成品位置；`▼ 收起成片` 把这块预览收掉（节点立刻变小，方便调卡片墙），`▶ 展开成片` 再放回来。展开只会回到你收起之前的那个节点高度，反复收起/展开不会越变越长。缩放档位与是否收起都记在本机浏览器里。
@@ -477,7 +477,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | `variant_policy` | **优先二采**（默认：卡片有二采视频就用二采，没有则退回一采）/ **仅一采** / **仅二采**。只归档了一个变体的卡片忽略该策略。 |
 | `join_mode` | **auto**（默认）：各段参数一致时无损直拷 `-c copy`，不一致自动重编码统一。**copy**：只允许直拷，参数不一致直接报错——用于确认过参数一致的项目。**reencode**：一律重编码，把不同分辨率的历史片段强行接在一起就用它。 |
 | `project_name` | 面板的项目下拉框写入。手动填写也可以，填完点「刷新」。 |
-| `exclude_clips` | 面板写入：卡片墙上点掉的 `clip_id`，逗号分隔。手动填写时写镜头标签的一部分也可以。 |
+| `exclude_clips` | 面板写入：卡片上排除掉的 `clip_id`，逗号分隔。手动填写时写镜头标签的一部分也可以。 |
 | `clip_order` | 拖动卡片时由面板写入：按成片播放顺序排列的 `clip_id`，逗号分隔。留空就是按镜头序号；面板上的 `↺ 按镜头序号` 会清掉它。没点名的卡片按序号补在后面；卡片已被删除的 `clip_id` 只告警并跳过。 |
 | `fps` | 只在重编码时生效，应与生成时的帧率一致（24）。 |
 | `output_name` | 可选。默认 `<项目>_<段数>shots_<时间戳>.mp4`。 |

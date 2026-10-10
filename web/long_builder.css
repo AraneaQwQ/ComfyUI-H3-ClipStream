@@ -32,18 +32,106 @@
     font-size: 11px;
 }
 
-/* Switched off in the panel: still visible, clearly not in the film. */
+/* Switched off in the panel: still visible, clearly not in the film. Only the picture is
+   dimmed - the button on the card is how the card comes back, so it stays readable. */
 .h3-lb-off {
-    opacity: 0.45;
-    filter: grayscale(0.9);
     border-style: dashed;
+    border-color: #475569;
 }
 
-.h3-lb-off:hover {
+.h3-lb-off .minimax-clip-thumb-wrap {
+    opacity: 0.45;
+    filter: grayscale(0.9);
+}
+
+.h3-lb-off:hover .minimax-clip-thumb-wrap {
     opacity: 0.75;
 }
 
-/* No archived video: cannot be part of the film, so it is not clickable. */
+/* The card is not a button any more: the switch is a button on the card, so a click that
+   misses it must not change the film. Draggable cards keep the grab cursor below. */
+.h3-lb-container .h3-lb-card {
+    cursor: default;
+}
+
+/* Long Builder cards have no corner delete button, so the shared body padding is only
+   lost width; the join/skip button wants the whole line. */
+.h3-lb-container .minimax-clip-body {
+    padding-right: 8px;
+}
+
+/* The switch itself, worded in film terms. It is a line of its own in the card body so
+   the hit area stays comfortable at 100% and on a 9:16 card. */
+.h3-lb-join-toggle {
+    width: 100%;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 6px;
+    font-size: 10px;
+    font-family: inherit;
+    color: #e2e8f0;
+    background: #172033;
+    border: 1px solid #3b4a63;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.h3-lb-join-toggle:hover {
+    color: #f8fafc;
+    background: #1e293b;
+    border-color: #60a5fa;
+}
+
+.h3-lb-join-toggle:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 1px;
+}
+
+/* Already out of the film: this button adds something back, so it reads green. */
+.h3-lb-join-off {
+    color: #bbf7d0;
+    background: #14281f;
+    border-color: #14532d;
+}
+
+.h3-lb-join-off:hover {
+    color: #dcfce7;
+    background: #1a3527;
+    border-color: #22c55e;
+}
+
+/* Saying "they can be added back" is not a way to do it: the summary carries the button. */
+.h3-lb-restore-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.h3-lb-restore-all {
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-family: inherit;
+    color: #bbf7d0;
+    background: #14281f;
+    border: 1px solid #14532d;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.h3-lb-restore-all:hover {
+    color: #dcfce7;
+    background: #1a3527;
+    border-color: #22c55e;
+}
+
+/* No archived video: cannot be part of the film, so there is no switch to offer. */
 .h3-lb-no-video {
     opacity: 0.35;
     cursor: not-allowed;
