@@ -3,16 +3,16 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-11 · `ccb80ac`（当前基线）
+## 2026-10-11 · `a211f5e`（当前基线，= tag `v0.7.6`）
 
 - 快照：`archive/2026-10-11-ccb80ac/`（46 个文件 / 637 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.5` 的全部内容（Long Builder 卡片实测参数 + 拖拽排序 + 节点尺寸不漂移 + 首段生成不再误报接缝），且已运行时验证。
-- 本次改动（下一版 `v0.7.6`）：Long Builder 的卡片屏蔽改成「卡片上的按钮」，并加一键全部加回——
+- 本次改动（`v0.7.6`）：已 commit `a211f5e`（6 文件 / +184 −30）+ annotated tag `v0.7.6`（tag 对象 `919a140`），已推送 `origin/main`（远端 main = `a211f5e`）与 `v0.7.6`。用户 2026-10-11 明确「可以留」→ 保留并推送。Long Builder 的卡片屏蔽改成「卡片上的按钮」，并加一键全部加回——
   - `web/long_builder_panel.js`：卡片体新增一行开关按钮 `.h3-lb-join-toggle`（在片 = `⊘ 移出成片`，已排除 = `↺ 加入成片`），并删掉整张卡片的 `item.onclick`。原因：卡片本身可拖拽排序，「点卡片 = 排除」和拖拽抢同一批像素，鼠标想读参数就误改一次成片；按钮同时给出可用的命中面积（9:16 竖屏卡片上尤其重要）。摘要行不再只写「点卡片可加回来」，改成带 `↺ 全部加回` 按钮（`restoreAll()` 只清空 `exclude_clips`，不动 `clip_order`，手动排好的顺序保持不变）。
   - `web/long_builder.css`：`.h3-lb-off` 只压暗缩略图——原来整卡 `opacity: .45` 会把「加回来」的按钮一起压掉，读不清；新增 `.h3-lb-join-toggle` / `.h3-lb-join-off` / `.h3-lb-restore-row` / `.h3-lb-restore-all`；`.h3-lb-container .h3-lb-card { cursor: default }`（可拖拽卡片的 `grab` 仍由后面的规则给出）；`.h3-lb-container .minimax-clip-body { padding-right: 8px }`——共享样式的 38px 右内边距是给素材库卡片右下角的删除按钮留的，Long Builder 卡片没有那个按钮，那 30 像素是白丢的宽度。
   - `web/long_builder_fit.js`：`rowHeightFor()` 里写死的 `+ 62` 抽成 `CARD_BODY_H = 86`。卡片体现在是三行（镜头名 / 实测参数 / 开关按钮），估算不跟着长，`⤢ 适应` 与缩放就会按两行的旧高度少算一行——面板虽然实测真实高度，但实测读不到时用的就是这个估算。
   - 测试：JS 24 → 25（`tests/js/long_builder_fit.test.mjs` 新增「行高估算覆盖整张卡片体」，锁 `rowHeightFor == thumbHeightFor + CARD_BODY_H` 且 `CARD_BODY_H > 62`）。本次只改前端，Python 147 用例仍 `OK (skipped=1)`。
-- 运行时验证：待用户实测。只改前端 → 覆盖运行副本 + 浏览器 Ctrl+F5，不需要重启 ComfyUI。
+- 运行时验证：**ComfyUI 内的实测仍未做**（本环境复跑过 `Ran 147 tests ... OK (skipped=1)`、JS 16/9 全绿、`work/check_plugin_web.ps1` 0 failures，并用 `work/sync_clipstream.ps1` 核对运行副本 46 文件 / 0 mismatch / 0 stale）。只改前端 → 覆盖运行副本 + 浏览器 Ctrl+F5 即可，不需要重启 ComfyUI。复测点：卡片上的 `⊘ 移出成片` / `↺ 加入成片` 只切换这一段、卡片不再因为点击而改变成片；`↺ 全部加回` 只清排除、不动手动排好的顺序；`⤢ 适应` 与缩放按三行卡片体估算（不再少算一行）。
 
 ## 2026-10-04 · `f630d44`（上一基线）
 
