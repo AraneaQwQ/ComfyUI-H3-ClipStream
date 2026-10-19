@@ -3,18 +3,18 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-18 · `481aa42`（当前基线，= tag `v0.7.6`）
+## 2026-10-19 · `37e334f`（当前基线，= tag `v0.8.0`）
 
 - 快照：`archive/2026-10-18-481aa42/`（46 个文件 / 661,667 字节，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.6` 的全部内容（Long Builder 卡片上的屏蔽按钮 + 一键全部加回），且已运行时验证。
-- 本次改动（分支 `feat/motion-context-071`，建议版本号 `v0.8.0`）：按《H3 ClipStream — Motion Context v0.7.1 兼容升级任务书》逐项对齐上游 `NikoDemon80/ComfyUI-H3-Motion-Context` 的 `518c083`（Release 0.7.1，含 `b911783` / `8ec8ba4` / `e9ec557`）。旧的上游基线是 `5335715`（0.6.2）。
+- 本次改动（`v0.8.0`）：已 commit `37e334f`（12 文件 / +1725 −173）+ annotated tag `v0.8.0`（tag 对象 `bf9038d`），已推送 `origin/main`（远端 main = `37e334f`）与 `v0.8.0`。内容：按《H3 ClipStream — Motion Context v0.7.1 兼容升级任务书》逐项对齐上游 `NikoDemon80/ComfyUI-H3-Motion-Context` 的 `518c083`（Release 0.7.1，含 `b911783` / `8ec8ba4` / `e9ec557`）。旧的上游基线是 `5335715`（0.6.2）。
   - 新增三个实验性节点（上游算法与 docstring 逐字保留，只把节点类改写成 V3）：`motion_context/sigma_tools.py` → `MiniMaxH3SigmasTailClipStream`（cat `sampling/custom_sampling/sigmas`）、`motion_context/refine_blend.py` → `MiniMaxH3RefineBlendClipStream`（cat `latent/minimax`，保留 `check_lazy_status`，`refined` 是 optional + lazy 输入）、`motion_context/join_match.py` → `MiniMaxH3JoinMatchClipStream`（cat `latent/minimax`）。输入顺序与上游一致；`return (x,)` → `io.NodeOutput(x)`；`def apply` → `@classmethod execute`；节点 id 一律带 `ClipStream` 后缀，避免与独立安装的上游插件撞名。三个文件顶部都写了 `Adapted from NikoDemon80/ComfyUI-H3-Motion-Context v0.7.1 (GPLv3) on 2026-10-18`。
   - `motion_context/__init__.py` 把三组节点并入 `NODE_LIST`；插件根的 `__init__.py` 经 `CONTEXT_NODES` 自动服务，不需要改。
   - `motion_context/nodes.py` 移植 0.6.3–0.7.1 的改动：0.34.0 的措辞、`audio_context_length` 默认 24 → 18（tooltip 说明「已存工作流保持原值」，所以旧存档不会被改写）、`_under_root()`（用 `normcase` 比较）/ `_under_output()` / `LATENT_FOLDERS = ("output", "input")` / `_resolve_input_latent()` / `_resolve_latent_path(path, clip_index, folder)`；Save Latent 返回 `ui = {"latents": [...]}`（普通 dict，不是 `ui.PreviewVideo`）；Load Latent 末尾新增 optional `stock_format` / `folder`，`fingerprint_inputs` 加 `:stock` 后缀并支持 NestedTensor。新 widget 全部放最后，旧存档格式不变。
   - `web/h3_motion_context.js`：Chain 前端联动 refine 双采样链路——`REFINE` 常量、`findPair()` 返回 `refines`、`syncRefines()` 在 `advance()` / `resetFirst()` 时同步 `use_refine`。
   - `scripts/sync_upstream.sh` 重写：按 URL 认 remote（`upstream` / `motion-context` 都兼容）、离线时 fetch 失败不致命、`BASELINE = "518c083"` 的增量日志、VERBATIM / PORTED / LOCAL_ONLY 三分类（`--apply` 只覆盖 VERBATIM，PORTED 永不覆盖）、逐文件差异行数、`--diff` / `--log` 模式、上游未映射新文件的检测；避开了 `set -e` 下 `A && B` 失败就退出的写法。**本沙箱无法启动 bash**（`C:\Program Files\Git\bin\bash.exe -c` → `couldn't create signal pipe, Win32 error 5`），因此这个脚本只做了逐行审查，没有 `bash -n` 与试跑。
   - 测试 147 → 194：新增 `tests/test_experiment_nodes.py`（47 用例，覆盖帧数 cycle、Refine Blend 的权重与 `check_lazy_status`、Join Match 的直通与报错、Sigmas Tail 的只改尾部与 tensor 保持、latent 路径与 fingerprint）。`tests/test_node_schema.py` 扩到 14 个节点，category 断言改成逐节点，并新增「所有 `MiniMaxH3*` 端口节点 id 都带 `ClipStream` 后缀」的断言。
-- 运行时验证：**未做**。上游任务书要求的 GPU 画质 A–E 对比（本环境没有 H3 采样条件）与 ComfyUI 内的实机实测都还没跑。本环境复跑过 `Ran 194 tests ... OK (skipped=1)`、`tests/js/` 两个文件 `# fail 0`、`work/check_plugin_web.ps1` 0 failures。覆盖运行副本用 `work/sync_clipstream.ps1`，它按目录递归枚举（只跳过 `archive` / `.git` / `__pycache__`），新增的 3 个 py 会被自动复制。
+- 运行时验证：**已通过（用户 2026-10-18/19 实机）**。用户重启 `E:\ai\ComfyUI-aki-v3` 的 ComfyUI 后，日志出现 `h3_motion_context: nodes registered.` 与 `[Clip Bin API] Successfully registered /minimax/clip_bin routes`，ClipStream 导入 0.0 秒、无 `FAILED to import`；`GET /minimax/clip_bin/projects?videos_only=1` 返回 22 个项目；Long Builder 读取与拼接正常（项目「跑步测试1」6 段 → 634 帧 / 26.42s，无损直拷）。用户确认 refine 双采样链路能接进旧工作流，Long Builder 未受影响——期间一次「读不到保存的内容」经核对是重启前旧页面的缓存 JS（开发副本与运行副本 50/50 文件 SHA256 逐文件一致，见 `work/diff_cs.ps1`；接口实测正常），硬刷新后恢复。本环境复跑 `Ran 194 tests ... OK (skipped=65)`、`tests/js/long_builder_fit.test.mjs` 16 pass、`tests/js/long_builder_order.test.mjs` 9 pass（两个文件 `# fail 0`）。仍未做：上游任务书要求的 GPU 画质 A–E 对比（本环境没有 H3 采样条件）。覆盖运行副本用 `work/sync_clipstream.ps1`，它按目录递归枚举（只跳过 `archive` / `.git` / `__pycache__`），新增的 3 个 py 会被自动复制。
 
 ## 2026-10-11 · `a211f5e`（上一基线，= tag `v0.7.6`）
 
