@@ -96,7 +96,7 @@ Long films built by the Long Builder go to `output/h3_long/<project_name>/` and 
 
 ---
 
-### Nodes (11 total)
+### Nodes (14 total)
 
 #### Clip Bin (`MiniMaxH3/ClipStream`)
 
@@ -117,6 +117,13 @@ Long films built by the Long Builder go to `output/h3_long/<project_name>/` and 
 | **Save / Load Latent** | B's own cross-run persistence (alternative to Clip Bin) |
 | **Chain** | Sequential execution control (approve / run / re-roll / auto-advance) |
 | **Seam Probe** | In-canvas measurement: verifies the seam is a true continuation, not a "re-imagining" |
+| **Refine Blend** (Experimental) | Keeps the first-pass frames that the pin established and takes the later frames from a refine pass, so a long chain stops drifting (faces ageing, detail building up). `use_refine = False` or no `refined` input = pass-through |
+| **Join Match** (Experimental) | Measures the step at the join inside the sampled latent and shifts the whole new clip back so it starts where the previous clip ended; optional spread/detail matching, each capped at 10%. `context_latent` is optional - without it the previous clip is taken from `samples` |
+| **Sigmas Tail** (Experimental) | Reshapes only the last few noise levels before the final zero, so the closing frames of a continuation do not come out crisper than the frames they were pinned from. Positive strength lifts the tail, negative does the opposite; `0.0` and too-short schedules pass through |
+
+> The three Experimental nodes are upstream algorithms carried verbatim, and all three are optional - the chain works without them.
+>
+> They work on latents, never on decoded media: `sampler -> Refine Blend -> Join Match -> Save Latent / VAE Decode`, and `BasicScheduler -> Sigmas Tail -> SamplerCustomAdvanced`. Join Match goes after Refine Blend, not before it. Drive Join Match `context_length` from the Motion Context node `trim_frames` output (0 on the first clip = pass-through), and Refine Blend `clip_index` from the Chain node - put the node in the same chain group. Save Latent and both decodes must take the final output, or the mp4 will not match the latent the next clip continues from. Motion Context Trim stays after Decode.
 
 ---
 
@@ -211,7 +218,9 @@ Requires `ffmpeg`/`ffprobe` on `PATH` (the Savers already need them to make prev
 | Parameter | Notes |
 |-----------|-------|
 | `context_length` | Only **5 / 22 / 39 / 56** (integer latent steps). **22** = near-seamless, default recommended. 56 = strongest pin but eats 2.3s of your delivered clip. |
-| `audio_context_length` | Independent audio tail window. **Multiple of 24** = whole seconds (24 = 1s, default). 0 = follow video window. |
+| `audio_context_length` | Independent audio tail window, END-aligned with the pinned picture window, so it only controls how far back the sound reaches. **0** = follow the picture window. Default **18**. Multiples of 3 land exactly on the 40 Hz audio grid; off-grid values are widened to the nearest whole step. A workflow saved earlier keeps whatever value it already stored. |
+| `stock_format` (Load Latent) | Off (default) = Motion Context own format, accepted only by the Motion Context node `context_latent` input. On = a standard H3 video+audio latent that stock nodes (Separate AV Latent, Latent Cut, samplers) accept. |
+| `folder` (Load Latent) | `output` (default) = a file or a chain folder under the ComfyUI output directory. `input` = one file under the input directory, e.g. uploaded over HTTP by an external tool. |
 | Resolution | `context_latent` **must** match the target clip resolution. Mismatch = hard rejection. |
 
 ---
@@ -260,13 +269,14 @@ ComfyUI-H3-ClipStream/
 │   └── sync_upstream.sh     # Helper: track upstream Motion-Context updates
 ├── tests/                   # unittest suite: python -m unittest discover -s tests -t .; JS: node tests/js/
 │   ├── _support.py          # Loaders: ComfyUI on sys.path, clipbin without comfy_api
-│   ├── test_node_schema.py  # Locks the 11 node ids, categories, inputs, outputs, options
+│   ├── test_node_schema.py  # Locks the 14 node ids, categories, inputs, outputs, options
 │   ├── test_frame_grid.py   # Frame <-> latent-step grid invariants
 │   ├── test_latent_codec.py # latent pack/unpack + image/audio standardising
 │   ├── test_asset_paths.py  # Card path safety & preview URLs
 │   ├── test_clip_bin_store.py # Single/dual card round-trip, index, deletion
 │   ├── test_long_builder.py # Shot-number & dragged ordering, join classification, seam warnings
 │   ├── test_projects_api.py # Project dropdown feed, card video probe cache
+│   ├── test_experiment_nodes.py # Frame cycle math, refine blend, join match, sigmas tail, latent paths
 │   └── js/long_builder_order.test.mjs # Deck order (node tests/js/long_builder_order.test.mjs)
 ├── web/
 │   ├── h3_motion_context.js       # Motion-Context frontend
@@ -282,7 +292,10 @@ ComfyUI-H3-ClipStream/
 │   ├── nodes.py                   # MotionContext / Trim / Save / Load / Chain
 │   ├── layout_contract.py         # Layout self-check
 │   ├── csrf_guard.py
-│   └── probe_node.py              # SeamProbe
+│   ├── probe_node.py              # SeamProbe
+│   ├── refine_blend.py            # Refine Blend (upstream algorithm, V3 node class)
+│   ├── join_match.py              # Join Match (upstream algorithm, V3 node class)
+│   └── sigma_tools.py             # Sigmas Tail (upstream algorithm, V3 node class)
 └── clipbin/
     ├── __init__.py
     ├── nodes.py                   # Saver + Picker (3 modes)
@@ -386,7 +399,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 
 ---
 
-### 节点清单（共 11 个）
+### 节点清单（共 14 个）
 
 #### Clip Bin（类别 `MiniMaxH3/ClipStream`）
 
@@ -407,6 +420,13 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | **Save / Load Latent** | B 自带的跨段持久化方案（Clip Bin 的替代） |
 | **Chain** | 顺序执行控制（审批/运行/重roll/自动推进） |
 | **Seam Probe** | 画布内接缝测量：验证是真接续还是"模仿" |
+| **Refine Blend**（实验性） | 保留被锚点钉住的首采帧，之后的帧改取 refine 二次采样的结果，用来止住长链漂移（脸变老、细节堆积）。`use_refine = False` 或不接 `refined` = 直通 |
+| **Join Match**（实验性） | 在采样结果里量出接缝处的跳变，把整段新片段平移回去，让它从上一段结束的地方开始；可选再做幅度/细节匹配，各自上限 10%。`context_latent` 可选，不接时从 `samples` 里取上一段 |
+| **Sigmas Tail**（实验性） | 只改终点 0 之前的最后几个噪声级别，让接续段的结尾不再比被锚定的开头更锐。正强度抬高尾部，负强度相反；`0.0` 或调度太短 = 直通 |
+
+> 三个实验性节点是上游算法的原样移植，全部可选，不接也能跑。
+>
+> 它们只处理 latent，不处理解码后的画面/音频：`采样器 -> Refine Blend -> Join Match -> Save Latent / VAE Decode`，以及 `BasicScheduler -> Sigmas Tail -> SamplerCustomAdvanced`。Join Match 接在 Refine Blend **之后**而不是之前。Join Match 的 `context_length` 用 Motion Context 节点的 `trim_frames` 输出驱动（首段是 0 = 直通），Refine Blend 的 `clip_index` 由 Chain 节点驱动（把它放进同一个 chain 分组）。Save Latent 和两个解码都要接最终输出，否则下一段接续的 latent 和 mp4 会对不上。Motion Context Trim 仍在 Decode 之后。
 
 ---
 
@@ -501,7 +521,9 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | 参数 | 说明 |
 |------|------|
 | `context_length` | 只有 **5 / 22 / 39 / 56**（整数 latent step）。**22** = 接近无缝，默认推荐。56 = 最强锚定但吃掉交付片段 2.3 秒。 |
-| `audio_context_length` | 独立音频尾部窗口。**24 的倍数** = 整秒（24 = 1 秒，默认）。0 = 跟随画面窗口。 |
+| `audio_context_length` | 独立音频尾部窗口，与钉住的画面窗口**尾对齐**，所以它只决定声音往前伸多远。**0** = 跟随画面窗口。默认 **18**。3 的倍数正好落在 40 Hz 音频网格上，不在网格上的值会被放宽到最近的整 step。已保存的工作流保持它原来存的值。 |
+| `stock_format`（Load Latent） | 关（默认）= Motion Context 自己的格式，只有 Motion Context 节点的 `context_latent` 能吃。开 = 标准 H3 音画 latent，原生节点（Separate AV Latent、Latent Cut、采样器）能吃。 |
+| `folder`（Load Latent） | `output`（默认）= ComfyUI output 目录下的文件或 chain 文件夹。`input` = input 目录下的单个文件，例如外部工具通过 HTTP 上传的那个。 |
 | 分辨率 | `context_latent` **必须**与目标片段同分辨率，否则硬拒绝。 |
 
 ---
@@ -550,13 +572,14 @@ ComfyUI-H3-ClipStream/
 │   └── sync_upstream.sh     # 辅助脚本：跟踪上游 Motion-Context 更新
 ├── tests/                   # unittest 套件：python -m unittest discover -s tests -t .；JS：node tests/js/
 │   ├── _support.py          # 装载助手：ComfyUI 进 sys.path、clipbin 不依赖 comfy_api
-│   ├── test_node_schema.py  # 锁定 11 个节点的 id、category、输入输出与选项
+│   ├── test_node_schema.py  # 锁定 14 个节点的 id、category、输入输出与选项
 │   ├── test_frame_grid.py   # 帧 ↔ latent step 网格不变量
 │   ├── test_latent_codec.py # latent 打包/解包与图像/音频标准化
 │   ├── test_asset_paths.py  # 卡片路径安全与预览 URL
 │   ├── test_clip_bin_store.py # 单卡/双卡往返、索引与删除
 │   ├── test_long_builder.py # 镜头序号与手动顺序、拼接方式判定、接缝告警
 │   ├── test_projects_api.py # 项目下拉框数据源、卡片视频参数缓存
+│   ├── test_experiment_nodes.py # 帧数 cycle、Refine Blend、Join Match、Sigmas Tail、latent 路径
 │   ├── js/long_builder_order.test.mjs # 卡片墙顺序（node tests/js/long_builder_order.test.mjs）
 │   └── js/long_builder_fit.test.mjs   # 卡片大小与区域高度（node tests/js/long_builder_fit.test.mjs）
 ├── web/
@@ -574,7 +597,10 @@ ComfyUI-H3-ClipStream/
 │   ├── nodes.py                   # MotionContext / Trim / Save / Load / Chain
 │   ├── layout_contract.py         # 布局自检
 │   ├── csrf_guard.py
-│   └── probe_node.py              # SeamProbe
+│   ├── probe_node.py              # SeamProbe
+│   ├── refine_blend.py            # Refine Blend（上游算法原样，节点类是 V3）
+│   ├── join_match.py              # Join Match（上游算法原样，节点类是 V3）
+│   └── sigma_tools.py             # Sigmas Tail（上游算法原样，节点类是 V3）
 └── clipbin/
     ├── __init__.py
     ├── nodes.py                   # Saver + Picker（3 模式）

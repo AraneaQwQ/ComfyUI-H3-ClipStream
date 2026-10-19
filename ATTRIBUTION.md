@@ -8,9 +8,17 @@ the combined work is distributed under the stricter of their licenses, **GPLv3**
 * Upstream: [NikoDemon80/ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
 * Author: NikoDemon80
 * License: **GPLv3** (see `LICENSE`)
+* Upstream baseline used here: `518c083` ("Release 0.7.1"). The previous
+  vendored baseline was `5335715` (0.6.2). `scripts/sync_upstream.sh` tracks the
+  delta and classifies every upstream file as VERBATIM / PORTED / LOCAL_ONLY.
 * Bundled here as the `motion_context/` sub-package, verbatim:
   `nodes.py`, `layout_contract.py`, `csrf_guard.py`, `probe_node.py`,
   and `web/h3_motion_context.js`.
+* Ported from the same upstream on 2026-10-18 - the algorithm and the docstrings
+  are verbatim; only the node class is rewritten for the ComfyUI V3 API and the
+  node id carries a `ClipStream` suffix so an independently installed upstream
+  plugin cannot clash: `refine_blend.py` (Refine Blend), `join_match.py`
+  (Join Match), `sigma_tools.py` (Sigmas Tail).
 
 ## 2. Clip Bin visual media pool
 * Upstream: [knoic/ComfyUI-MiniMaxH3-PrefixStream](https://github.com/knoic/ComfyUI-MiniMaxH3-PrefixStream)

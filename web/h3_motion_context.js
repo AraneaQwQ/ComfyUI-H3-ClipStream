@@ -5,6 +5,7 @@ import { api } from "../../scripts/api.js";
 
 const LOAD = "MiniMaxH3MotionContextLoadLatentClipStream";
 const SAVE = "MiniMaxH3MotionContextSaveLatentClipStream";
+const REFINE = "MiniMaxH3RefineBlendClipStream";
 const CHAIN = "MiniMaxH3MotionContextChainClipStream";
 const MAX = 9999;
 
@@ -74,10 +75,25 @@ function findPair(ctrl) {
     const pool = members.length ? members : nodes.filter((n) => inGroup(g, n));
     const load = pool.find((n) => n.comfyClass === LOAD);
     const save = pool.find((n) => n.comfyClass === SAVE);
-    if (load && save) return { load, save };
+    if (load && save) {
+      return { load, save, refines: pool.filter((n) => n.comfyClass === REFINE) };
+    }
   }
-  if (loads.length === 1 && saves.length === 1) return { load: loads[0], save: saves[0] };
+  if (loads.length === 1 && saves.length === 1) {
+    return { load: loads[0], save: saves[0], refines: nodes.filter((n) => n.comfyClass === REFINE) };
+  }
   return null;
+}
+
+// Refine Blend needs to know when it is on the first clip, because there is
+// no previous clip to hold its head against and the whole thing should be
+// refined instead. It has no wire to take that from: Load's clip_index is a
+// widget this file writes, not an output. So mirror Load's index into any
+// Refine Blend sharing the group, the same way Load and Save are driven.
+function syncRefines(pair) {
+  if (!pair || !Array.isArray(pair.refines)) return;
+  const index = readClip(pair.load);
+  for (const node of pair.refines) writeClip(node, index);
 }
 
 function clipWidget(node) {
@@ -212,6 +228,7 @@ function advance(ctrl) {
   if (save < 1) save = 1;
   writeClip(pair.load, Math.min(load, MAX));
   writeClip(pair.save, Math.min(save, MAX));
+  syncRefines(pair);
   app.graph?.setDirtyCanvas?.(true, true);
   paint(ctrl);
   return true;
@@ -222,6 +239,7 @@ function resetFirst(ctrl) {
   if (!pair) return false;
   writeClip(pair.load, 0);
   writeClip(pair.save, 1);
+  syncRefines(pair);
   app.graph?.setDirtyCanvas?.(true, true);
   paint(ctrl);
   return true;

@@ -6,27 +6,17 @@ Wire it between a stock H3 conditioning node and the sampler:
         -> H3 Motion Context
         -> guider / sampler
 
-Two axes to test, both cheap.
+The pinned run is taken straight from the previous clip's latent when one
+is wired, or encoded from its frames in one VAE call when not. Either way
+each latent step becomes one cond block, so the motion between frames
+lives inside the latent instead of being implied across separate stills.
+The run sits at the head of the delivered timeline, where the Trim node
+removes it, and the pinned audio goes on this clip's own timeline, ending
+at the join.
 
-encode_mode
-  frames  one VAE call per frame, each pinned as its own cond block. The
-          model sees N snapshots at N instants.
-  video   one VAE call for the whole run. The H3 video VAE has latent_dim
-          3, so it reads the batch axis as time and compresses the run
-          into fewer latent steps (5 pixel frames -> 2 steps, 22 -> 7).
-          Each step becomes one cond block, so the motion between frames
-          lives inside the latent instead of being implied across separate
-          stills. Far fewer rows and one VAE load.
-
-anchor_mode
-  head    pinned frames occupy indices 0..N-1 of the delivered timeline.
-          They come back in the output, so trim that many frames off the
-          front before concatenating.
-  before  pinned frames sit at negative indices, ending at -1, so
-          delivered frame 0 continues from them and nothing is wasted.
-          Their time coordinates land below text_len, which is the range
-          the text rows occupy. Whether that collision matters is exactly
-          what this mode is asking.
+Those choices used to be widgets. Each had one right answer, so they are
+constants now (ENCODE_MODE, ANCHOR_MODE, AUDIO_MODE, CROP below), with the
+losing branches kept so the failure they cause can be reproduced.
 """
 
 # Modified by RAFOLIE on 2026-09-28: native ComfyUI V3 schema and execution.
@@ -61,7 +51,7 @@ _LOG = logging.getLogger("h3_motion_context")
 def _ensure_layout_ok():
     """Prove ComfyUI still places anchors the way this pack needs, once.
 
-    This used to install two runtime patches. ComfyUI 0.33 does natively
+    This used to install two runtime patches. ComfyUI 0.34.0 does natively
     what they existed to do, so the node now builds plain keyframe dicts
     and only has to check that the arithmetic behind them still holds. See
     layout_contract.py for what is checked and why it is not free.
@@ -330,7 +320,7 @@ class MiniMaxH3MotionContext(io.ComfyNode):
                 io.Vae.Input('vae'),
                 io.Latent.Input('latent'),
                 io.Combo.Input('context_length', options=['22', '5', '39', '56'], default='22', tooltip="Frames of the previous clip's picture to carry over. Only these lengths are whole numbers of latent steps, so only these are offered. 5 is just barely fluid, 22 is nearly seamless. Longer windows pin more motion but come off the front of the delivered clip, so 56 spends 2.3 seconds of the render on frames you throw away."),
-                io.Int.Input('audio_context_length', default=24, min=0, max=240, tooltip='Frames of tail audio to pin, independent of the picture window. 0 follows it. The window is END-aligned with the pinned video, so this only controls how far back the sound reaches. Multiples of 3 land exactly on the 40 Hz audio grid and multiples of 24 are whole seconds: 24 pins the last second. Off-grid values are widened to the nearest whole step.'),
+                io.Int.Input('audio_context_length', default=18, min=0, max=240, tooltip='Frames of tail audio to pin, independent of the picture window. 0 follows it. The window is END-aligned with the pinned video, so this only controls how far back the sound reaches. 18 is the recommended balance: longer windows muffle the sound a little more at every join, shorter ones let music wander between clips. Multiples of 3 land exactly on the 40 Hz audio grid. Off-grid values are widened to the nearest whole step. Saved workflows keep whatever value they already stored.'),
                 io.Image.Input('context_frames', optional=True, tooltip='Decoded frames of the previous clip. Used when no context_latent is wired. When one is, the picture comes from it instead and this is ignored.'),
                 io.Latent.Input('context_latent', optional=True, tooltip="Previous clip's SAMPLER OUTPUT latent (the same one you wire into the decode nodes). Supplies both picture and sound, sliced straight out, skipping the decode and re-encode that cost a little quality at every link of a chain. Must be the same resolution as the clip being generated."),
                 io.Vae.Input('audio_vae', optional=True, tooltip="H3 audio VAE. Supply with context_audio to carry the previous clip's tail sound across the join. Not needed when context_latent is wired."),
@@ -346,7 +336,7 @@ class MiniMaxH3MotionContext(io.ComfyNode):
 
     @classmethod
     def execute(cls, conditioning, vae, latent, context_length,
-              audio_context_length=24, context_frames=None,
+              audio_context_length=18, context_frames=None,
               context_latent=None, audio_vae=None, context_audio=None,
               enable_audio_context=True):
         if context_latent is None and context_frames is None:
@@ -446,7 +436,8 @@ class MiniMaxH3MotionContext(io.ComfyNode):
             if getattr(enc, "ndim", 0) != 5:
                 raise ValueError(
                     "h3_motion_context: video-mode encode returned shape %s, "
-                    "expected [B,C,T,H,W]. Try encode_mode=frames."
+                    "expected [B,C,T,H,W]. The H3 video VAE may have "
+                    "changed upstream; refusing to run."
                     % (tuple(getattr(enc, "shape", ())),))
             steps = int(enc.shape[2])
             offsets = _step_offsets(steps)
@@ -478,7 +469,7 @@ class MiniMaxH3MotionContext(io.ComfyNode):
         keyframes = []
         for p, blk in zip(indices, blocks):
             # Straight to stock. `resolved_frame_index` is the real pixel
-            # frame the block sits at, which ComfyUI 0.33 accepts for any
+            # frame the block sits at, which ComfyUI 0.34.0 accepts for any
             # value, so there is nothing to smuggle and nothing to rewrite
             # afterwards. One keyframe per latent step rather than a single
             # multi-step block: `indices` already carries each step's real
@@ -759,22 +750,55 @@ class MiniMaxH3MotionContextTrim(io.ComfyNode):
         return io.NodeOutput(out_images, out_audio)
 
 
-def _under_output(path):
-    """Resolve `path` inside ComfyUI's output folder. None if it would escape.
+def _under_root(root, path, default=""):
+    """Resolve `path` inside `root`. None if it would escape.
 
-    Absolute paths are allowed only when they already live under output/.
-    Relative paths join onto output/. This is what keeps latent_path from
-    becoming an arbitrary file read or a delete-anywhere on Clear.
+    Absolute paths are allowed only when they already live under root.
+    Relative paths join onto root. Compared case-insensitively where the
+    filesystem is (normcase), so D:\\Temp and D:\\TEMP are the same root.
     """
-    root = os.path.realpath(folder_paths.get_output_directory())
-    p = (path or "").strip().strip('"').strip("'") or "h3_context"
+    root = os.path.realpath(root)
+    p = (path or "").strip().strip('"').strip("'") or default
+    if not p:
+        return None
     resolved = os.path.realpath(p if os.path.isabs(p) else os.path.join(root, p))
-    if resolved != root and not resolved.startswith(root + os.sep):
+    r, c = os.path.normcase(root), os.path.normcase(resolved)
+    if c != r and not c.startswith(r.rstrip(os.sep) + os.sep):
         return None
     return resolved
 
 
-def _resolve_latent_path(path, clip_index=0):
+def _under_output(path):
+    """Resolve `path` inside ComfyUI's output folder. None if it would escape.
+
+    This is what keeps latent_path from becoming an arbitrary file read or a
+    delete-anywhere on Clear.
+    """
+    return _under_root(folder_paths.get_output_directory(), path, "h3_context")
+
+
+LATENT_FOLDERS = ("output", "input")
+
+
+def _resolve_input_latent(path):
+    """A latent FILE inside ComfyUI's input folder (uploaded via /upload/image).
+
+    Input mode never picks slots from a folder: the uploader names the exact
+    file, so there is nothing to choose between.
+    """
+    c = _under_root(folder_paths.get_input_directory(), path)
+    if not c:
+        raise FileNotFoundError(
+            "h3_motion_context: path must name a file inside the ComfyUI "
+            "input folder.")
+    if not os.path.isfile(c):
+        raise FileNotFoundError(
+            "h3_motion_context: no latent file %r in the ComfyUI input "
+            "folder." % (path or "").strip())
+    return c
+
+
+def _resolve_latent_path(path, clip_index=0, folder="output"):
     """Turn the loader's path input into a concrete file under output/.
 
     Accepts a path relative to ComfyUI's output folder, an absolute path
@@ -783,8 +807,14 @@ def _resolve_latent_path(path, clip_index=0):
     *_00001.safetensors. Auto-mode files carry a trailing underscore
     (*_00001_.safetensors) and are never matched, because their numbers
     count runs and could hold a reject. clip_index 0 is handled by the
-    Load node itself (no file, first clip).
+    Load node itself (no file, first clip). folder="input" reads one file
+    from the input folder instead; see _resolve_input_latent.
     """
+    if folder == "input":
+        return _resolve_input_latent(path)
+    if folder not in LATENT_FOLDERS:
+        raise ValueError("h3_motion_context: folder must be one of %s, got %r."
+                         % (", ".join(LATENT_FOLDERS), folder))
     c = _under_output(path)
     if not c:
         raise FileNotFoundError(
@@ -988,7 +1018,14 @@ class MiniMaxH3MotionContextSaveLatent(io.ComfyNode):
         _write_safetensors(path, {"video": video, "audio": audio})
         _LOG.info("h3_motion_context: saved AV latent to %s (video %s, "
                   "audio %s)", path, tuple(video.shape), tuple(audio.shape))
-        return io.NodeOutput(path)
+        # report the file like stock Save Latent's ui.latents, so an HTTP
+        # client can find it in /history and fetch it through /view
+        subfolder = os.path.relpath(os.path.dirname(path),
+                                    folder_paths.get_output_directory())
+        subfolder = "" if subfolder == "." else subfolder.replace(os.sep, "/")
+        return io.NodeOutput(path, ui={
+            "latents": [{"filename": os.path.basename(path),
+                         "subfolder": subfolder, "type": "output"}]})
 
 
 class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
@@ -1007,8 +1044,10 @@ class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
     Context passes the conditioning through. First clip of a chain is
     Load 0 / Save 1, then Load 1 / Save 2, and so on.
 
-    The output is ONLY for the Motion Context node's context_latent input.
-    It is not a decodable latent -- do not wire it into VAE decode.
+    By default the output is ONLY for the Motion Context node's
+    context_latent input. It is not a decodable latent, so do not wire it
+    into VAE decode. Turn on stock_format for a standard H3 AV latent that
+    stock nodes accept instead.
     """
 
     @classmethod
@@ -1017,10 +1056,14 @@ class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
             node_id='MiniMaxH3MotionContextLoadLatentClipStream',
             display_name='H3 Motion Context Load Latent (ClipStream)',
             category='conditioning/minimax',
-            description='Load a latent saved by H3 Motion Context Save Latent, for the context_latent input only.',
+            description='Load a latent saved by H3 Motion Context Save Latent. By default for the context_latent input only; stock_format outputs a standard H3 AV latent.',
             inputs=[
                 io.String.Input('latent_path', default='h3_context', tooltip='A saved latent file, or a folder (relative paths resolve against the ComfyUI output directory). Pointing at a specific FILE always loads that file when clip_index is greater than 0, ignoring the index. clip_index 0 never reads a file.'),
                 io.Int.Input('clip_index', default=0, min=0, max=9999, step=1, tooltip="The clip to CONTINUE FROM: that clip's slot is loaded. First clip: 0 here and 1 on the Save node (nothing is loaded). Clip 2 from clip 1: 1 here and 2 on the Save node."),
+                # Optional and last on purpose. ComfyUI stores widget values by
+                # position, so new widgets go at the end of the list.
+                io.Boolean.Input('stock_format', optional=True, default=False, tooltip="Off: Motion Context's own format, accepted only by the Motion Context node's context_latent input. On: a standard H3 video+audio latent that stock nodes (Separate AV Latent, Latent Cut, samplers) accept."),
+                io.Combo.Input('folder', options=list(LATENT_FOLDERS), optional=True, default='output', tooltip="Where latent_path lives. output: a file or chain folder under the ComfyUI output directory (the normal chain). input: one file under the ComfyUI input directory, e.g. uploaded over HTTP by an external tool. clip_index 0 still loads nothing; above 0 it loads that file."),
             ],
             outputs=[
                 io.Latent.Output(display_name='LATENT'),
@@ -1029,7 +1072,8 @@ class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
 
 
     @classmethod
-    def fingerprint_inputs(cls, latent_path, clip_index=0):
+    def fingerprint_inputs(cls, latent_path, clip_index=0,
+                           stock_format=False, folder="output"):
         # the path string stays constant while the file behind it changes
         # (an overwritten slot), so cache on the resolved file identity
         # instead -- otherwise ComfyUI would happily serve a stale latent
@@ -1037,19 +1081,21 @@ class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
         if int(clip_index) <= 0:
             return "disabled"
         try:
-            p = _resolve_latent_path(latent_path, clip_index)
-            return "%s:%d:owned" % (p, os.stat(p).st_mtime_ns)
+            p = _resolve_latent_path(latent_path, clip_index, folder)
+            return "%s:%d:owned" % (p, os.stat(p).st_mtime_ns) + (
+                ":stock" if stock_format else "")
         except Exception:
             return float("NaN")  # unresolvable: never cache
 
     @classmethod
-    def execute(cls, latent_path, clip_index=0):
+    def execute(cls, latent_path, clip_index=0, stock_format=False,
+                folder="output"):
         if int(clip_index) <= 0:
             return io.NodeOutput(None)
         if _st_load is None:
             raise RuntimeError("h3_motion_context: safetensors is not "
                                "available; cannot load latents.")
-        path = _resolve_latent_path(latent_path, clip_index)
+        path = _resolve_latent_path(latent_path, clip_index, folder)
         data = _st_load(path)
         if "video" not in data or "audio" not in data:
             raise ValueError(
@@ -1060,9 +1106,14 @@ class MiniMaxH3MotionContextLoadLatent(io.ComfyNode):
         video = data.pop("video").contiguous().clone()
         audio = data.pop("audio").contiguous().clone()
         _LOG.info("h3_motion_context: loaded AV latent from %s", path)
+        if stock_format:
+            # opted in: the standard nested AV latent stock nodes expect
+            import comfy.nested_tensor
+            return io.NodeOutput({"samples": comfy.nested_tensor.NestedTensor(
+                (video, audio))})
         # a plain list, not a NestedTensor: only this repo's context_latent
-        # input accepts it, which is the point -- it cannot be mistaken
-        # for a decodable latent without failing loudly downstream
+        # input accepts it, which is the point. It cannot be mistaken for
+        # a decodable latent without failing loudly downstream.
         return io.NodeOutput({'samples': [video, audio]})
 
 

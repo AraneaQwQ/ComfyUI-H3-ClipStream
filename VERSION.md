@@ -3,7 +3,20 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-11 · `a211f5e`（当前基线，= tag `v0.7.6`）
+## 2026-10-18 · `481aa42`（当前基线，= tag `v0.7.6`）
+
+- 快照：`archive/2026-10-18-481aa42/`（46 个文件 / 661,667 字节，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
+- 该基线包含 `v0.7.6` 的全部内容（Long Builder 卡片上的屏蔽按钮 + 一键全部加回），且已运行时验证。
+- 本次改动（分支 `feat/motion-context-071`，建议版本号 `v0.8.0`）：按《H3 ClipStream — Motion Context v0.7.1 兼容升级任务书》逐项对齐上游 `NikoDemon80/ComfyUI-H3-Motion-Context` 的 `518c083`（Release 0.7.1，含 `b911783` / `8ec8ba4` / `e9ec557`）。旧的上游基线是 `5335715`（0.6.2）。
+  - 新增三个实验性节点（上游算法与 docstring 逐字保留，只把节点类改写成 V3）：`motion_context/sigma_tools.py` → `MiniMaxH3SigmasTailClipStream`（cat `sampling/custom_sampling/sigmas`）、`motion_context/refine_blend.py` → `MiniMaxH3RefineBlendClipStream`（cat `latent/minimax`，保留 `check_lazy_status`，`refined` 是 optional + lazy 输入）、`motion_context/join_match.py` → `MiniMaxH3JoinMatchClipStream`（cat `latent/minimax`）。输入顺序与上游一致；`return (x,)` → `io.NodeOutput(x)`；`def apply` → `@classmethod execute`；节点 id 一律带 `ClipStream` 后缀，避免与独立安装的上游插件撞名。三个文件顶部都写了 `Adapted from NikoDemon80/ComfyUI-H3-Motion-Context v0.7.1 (GPLv3) on 2026-10-18`。
+  - `motion_context/__init__.py` 把三组节点并入 `NODE_LIST`；插件根的 `__init__.py` 经 `CONTEXT_NODES` 自动服务，不需要改。
+  - `motion_context/nodes.py` 移植 0.6.3–0.7.1 的改动：0.34.0 的措辞、`audio_context_length` 默认 24 → 18（tooltip 说明「已存工作流保持原值」，所以旧存档不会被改写）、`_under_root()`（用 `normcase` 比较）/ `_under_output()` / `LATENT_FOLDERS = ("output", "input")` / `_resolve_input_latent()` / `_resolve_latent_path(path, clip_index, folder)`；Save Latent 返回 `ui = {"latents": [...]}`（普通 dict，不是 `ui.PreviewVideo`）；Load Latent 末尾新增 optional `stock_format` / `folder`，`fingerprint_inputs` 加 `:stock` 后缀并支持 NestedTensor。新 widget 全部放最后，旧存档格式不变。
+  - `web/h3_motion_context.js`：Chain 前端联动 refine 双采样链路——`REFINE` 常量、`findPair()` 返回 `refines`、`syncRefines()` 在 `advance()` / `resetFirst()` 时同步 `use_refine`。
+  - `scripts/sync_upstream.sh` 重写：按 URL 认 remote（`upstream` / `motion-context` 都兼容）、离线时 fetch 失败不致命、`BASELINE = "518c083"` 的增量日志、VERBATIM / PORTED / LOCAL_ONLY 三分类（`--apply` 只覆盖 VERBATIM，PORTED 永不覆盖）、逐文件差异行数、`--diff` / `--log` 模式、上游未映射新文件的检测；避开了 `set -e` 下 `A && B` 失败就退出的写法。**本沙箱无法启动 bash**（`C:\Program Files\Git\bin\bash.exe -c` → `couldn't create signal pipe, Win32 error 5`），因此这个脚本只做了逐行审查，没有 `bash -n` 与试跑。
+  - 测试 147 → 194：新增 `tests/test_experiment_nodes.py`（47 用例，覆盖帧数 cycle、Refine Blend 的权重与 `check_lazy_status`、Join Match 的直通与报错、Sigmas Tail 的只改尾部与 tensor 保持、latent 路径与 fingerprint）。`tests/test_node_schema.py` 扩到 14 个节点，category 断言改成逐节点，并新增「所有 `MiniMaxH3*` 端口节点 id 都带 `ClipStream` 后缀」的断言。
+- 运行时验证：**未做**。上游任务书要求的 GPU 画质 A–E 对比（本环境没有 H3 采样条件）与 ComfyUI 内的实机实测都还没跑。本环境复跑过 `Ran 194 tests ... OK (skipped=1)`、`tests/js/` 两个文件 `# fail 0`、`work/check_plugin_web.ps1` 0 failures。覆盖运行副本用 `work/sync_clipstream.ps1`，它按目录递归枚举（只跳过 `archive` / `.git` / `__pycache__`），新增的 3 个 py 会被自动复制。
+
+## 2026-10-11 · `a211f5e`（上一基线，= tag `v0.7.6`）
 
 - 快照：`archive/2026-10-11-ccb80ac/`（46 个文件 / 637 KB，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.5` 的全部内容（Long Builder 卡片实测参数 + 拖拽排序 + 节点尺寸不漂移 + 首段生成不再误报接缝），且已运行时验证。
@@ -90,7 +103,10 @@
 | `v0.7.3` | `5c7330d` | Long Builder 面板化 + 按镜头序号定序（去掉血缘回溯、多余输入与输出接口）。运行时已验证：用户覆盖运行副本后确认面板、`/minimax/clip_bin/projects` 与节点内联预览正常（单元 112 用例 + 真 ffmpeg/ffprobe 冒烟亦通过） |
 | `v0.7.4` | `2b46aa2` | Clip Bin Picker 项目选单 + 选单内新建/删除项目（`create_project`、`delete_project`、`POST /minimax/clip_bin/project[/delete]`、`?videos_only=1`） |
 | `v0.7.5` | `ccb80ac` | Long Builder 卡片实测分辨率/时长 + 拖拽排序 + 首段生成不再误报接缝 + 卡片缩放换行与节点尺寸不漂移。运行时已验证 |
-| `v0.7.6` | 待提交 | Long Builder 卡片屏蔽改成卡片上的按钮（`⊘ 移出成片` / `↺ 加入成片`）+ 摘要行 `↺ 全部加回`；只改前端 |
+| `v0.7.6` | `a211f5e` | Long Builder 卡片屏蔽改成卡片上的按钮（`⊘ 移出成片` / `↺ 加入成片`）+ 摘要行 `↺ 全部加回`；只改前端。已推送 `origin/main` |
+| `v0.8.0` | 待提交 | 上游 Motion-Context 0.7.1 的三个实验节点（Refine Blend / Join Match / Sigmas Tail）+ Save/Load Latent 改进 + Chain 联动 + `sync_upstream.sh` 重写；见本文件 2026-10-18 段 |
+
+> 上游仓库自己也有 `v0.7.0` / `v0.7.1` 这两个 tag，和我们这条线**同名不同指**。因此本次不用 `v0.7.7`，直接进 `v0.8.0`；`git tag -l` 里看到的 `v0.7.x` 全部是我们自己的（`git rev-list -n1 v0.7.x` 可核对指向）。
 
 打 tag 与校验：
 
@@ -112,7 +128,7 @@ node tests/js/long_builder_order.test.mjs   # 前端卡片墙顺序（纯函数�
 node tests/js/long_builder_fit.test.mjs     # 前端卡片大小与区域高度（同上）
 ```
 
-- 当前结果：`Ran 147 tests ... OK (skipped=1)` + `# pass 9` + `# pass 16`（JS 共 25 项）（61 → 96 → 112 → 119 → 125 → 147：新增手动顺序与卡片视频参数探测用例；前端规则在 `tests/js/` 下两个文件，用 node 跑）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
+- 当前结果：`Ran 194 tests ... OK (skipped=1)` + `# pass 9` + `# pass 16`（JS 共 25 项）（61 → 96 → 112 → 119 → 125 → 147 → 194：新增三个实验节点与 latent 路径的用例；前端规则在 `tests/js/` 下两个文件，用 node 跑）。唯一 skip 是 Windows 上创建目录符号链接需要权限（WinError 1314），该用例在有权限时会跑。
 - `COMFYUI_ROOT` 只在 schema 测试里必需；从 `custom_nodes` 下运行时会自动推断根目录。
 - 覆盖范围：
   - `tests/test_frame_grid.py`：像素帧 ↔ latent step 往返、`VIDEO_RUN_GRID` 每点可达、`context_length` 只落在整 step 上、clipbin 与 motion_context 两套帧数口径一致。
@@ -121,8 +137,9 @@ node tests/js/long_builder_fit.test.mjs     # 前端卡片大小与区域高度�
   - `tests/test_clip_bin_store.py`：单卡与双卡存取往返、项目索引排序与丢失后重建、删除语义、shot tag slug 与唯一性、Auto tag 按项目递增。
   - `tests/test_long_builder.py`：镜头序号升序定序（`Shot 12` 排在 `Shot 2` 之后）、无数字标签按 `created_at` 排在带序号卡片之后、`exclude_clips` 按 `clip_id` 或镜头标签片段排除、序号缺口告警、缺归档视频只告警不报错、preview 的 filename/subfolder 可寻址、变体选择策略、ffprobe JSON 解析与帧率分数解析、`classify_join` 的分辨率/帧率/音轨/采样率判定、`seam_warnings` 的未裁接缝判定（成片首段与首段生成卡片永不告警）、concat list 转义，以及 `MiniMaxClipBinLongBuilder` 的端到端装配（用假 ffmpeg/ffprobe）；`TestManualCardOrder` 锁定 `clip_order`：手动顺序优先、未点名的按序号追加、已删除引用只告警、重复引用只算一次、被排除的卡片不因为被点名就回来，端到端用例断言 ffmpeg 收到的文件顺序就是拖出来的顺序；`TestInitialGenerationMarker` 与 `TestSeamWarnings` 的新用例锁定「首段生成」不被误报为未裁，而未接血缘的中间段照旧判定。
   - `tests/test_projects_api.py`：`list_projects_api()` 列出全部项目及其卡片数/视频数，`videos_only=True` 只留能成片的库；`create_project()` 新建空库、同名幂等、返回清洗后的文件夹名、空名与超长名报错；`delete_project()` 删除整库（含视频）、`confirm` 不匹配报错、库已不存在时返回 `deleted: False` 且不建幽灵目录；`TestCardVideoProbe` 用假 probe 锁定卡片视频参数的测量与缓存（每个文件只测一次、size/mtime 变了重测、无视频不缓存）以及 `variant_policy` 决定测哪个变体。
+  - `tests/test_experiment_nodes.py`：三个实验节点的纯函数与执行路径。帧数 cycle（`pixel_frames` 的 0/1/5/9/13/17/18/22、`steps_for_frames(5/22/39/56) = 2/7/12/17`、`nearest_valid(20)` 的候选）；Refine Blend 的权重表、`check_lazy_status`（不接 `refined` 或 `use_refine = False` 时不请求它）、hold 段逐帧不变、首段（无 pin）全取 refined、非法 hold 报错、形状不符报错、音频取 original 或 refined、容器保持（list 与 NestedTensor）；Join Match 的直通与报错、`shot_motion` 静止 = 0 与运动 > `STILL_MAX`、`STILL_MAX` 落在 0.40–0.58 的实测间隙里；Sigmas Tail 的直通 / 只改尾部 / 正负强度升降 / 平坦段强制递减 / 过短直通 / tensor 保持与 `same_kind`；latent 路径的 `_under_root` 越界与 `normcase`、input 模式、非法 folder 报错、`_%05d` 与自动编号 hint、Load 默认 list、`stock_format` 出 NestedTensor、clip 0 返回 None、fingerprint 的 `:owned` / `:stock` / `disabled` / NaN、Save 的 `ui["latents"]`。
 - `tests/js/long_builder_order.test.mjs`：`node tests/js/long_builder_order.test.mjs`。锁定前端与后端同规则：默认按镜头序号、`Shot 12` 在 `Shot 2` 之后、手动顺序优先且未点名的按序号追加、不能拼接的卡片排在最后且不进 `joinIds`、`deck` 前 N 张就是 `joinIds`（面板的位置角标依赖这条不变量）、`moveCard` 的前后插入与「拖到自己/未知卡片上 = 不变」。
-  - `tests/test_node_schema.py`：锁定 11 个节点的 id / category / 输入 id 与 optional / 输出 display_name 顺序 / Picker mode 选项 / `context_length` 选项 / `is_output_node` / Long Builder 输入全部 advanced 且只有一个 `video` 输出，并校验 `H3ClipStreamExtension().get_node_list()` 返回同一批。
+  - `tests/test_node_schema.py`：锁定 14 个节点的 id / category（逐节点断言，实验节点在 `latent/minimax` 与 `sampling/custom_sampling/sigmas`）/ 输入 id 与 optional / 输出 display_name 顺序 / Picker mode 选项 / `context_length` 选项 / `is_output_node` / Long Builder 输入全部 advanced 且只有一个 `video` 输出 / Load Latent 末尾的 `stock_format` 与 `folder`，并校验 `H3ClipStreamExtension().get_node_list()` 返回同一批；`test_ported_upstream_ids_keep_the_clipstream_suffix` 锁住所有 `MiniMaxH3*` 端口节点的 id 后缀。
 - 升级节点或改动 schema 时，`test_node_schema.py` 会失败——那是有意的：先改测试再改实现，README 的节点表同步更新。
 
 ## 已知问题（未修，已用测试锁定现状）
@@ -141,3 +158,5 @@ node tests/js/long_builder_fit.test.mjs     # 前端卡片大小与区域高度�
 - 2026-10-04：Long Builder 卡片显示真实视频参数 + 拖拽排序（`v0.7.5`）——`clipbin/clip_bin_api.py` 新增 `_video_probe_fields()` 与 `video_probe` 缓存、`get_project_clips_api` 接受 `variant_policy` 与 `probe=1` 门控；`clipbin/long_builder.py::resolve_shot_order` 与 `clipbin/long_nodes.py` 新增 `clip_order`；新增 `web/long_builder_order.js`，`web/long_builder_panel.js` 显示实测分辨率/时长并支持拖拽重排，`web/long_builder.css` 加拖拽与位置样式；测试 125 → 139，新增 `tests/js/long_builder_order.test.mjs`（9 用例）；README 中英文「长视频拼接」章节同步。同日再修 `clipbin/long_builder.py`：`seam_warnings` 增加首段生成检测（`is_initial_generation` / `is_initial`），首段卡片不再被误报为「未裁接缝」，测试 139 → 147。
 - 2026-10-11：Long Builder 卡片屏蔽改成卡片上的按钮（`v0.7.6`）——`web/long_builder_panel.js` 卡片体加 `.h3-lb-join-toggle`、去掉整卡 `item.onclick`（与拖拽抢事件）、摘要行加 `↺ 全部加回`（`restoreAll()` 只清 `exclude_clips`）；`web/long_builder.css` 只压暗缩略图并补按钮/恢复行样式与 `cursor: default`；`web/long_builder_fit.js` 的行高估算 `+62` → `CARD_BODY_H = 86`；JS 测试 24 → 25；README 中英文同步。
 - 2026-10-03：Long Builder 简化（`v0.7.3`）——`clipbin/long_builder.py` 改按镜头序号定序（新增 `shot_number` / `shot_sort_key` / `numbering_gaps` / `resolve_shot_order`，删除血缘回溯与 `MAX_CHAIN` / `INITIAL_MARKERS`）；`clipbin/long_nodes.py` 输入全 advanced、输出单个 `video` 并内联预览；`clipbin/clip_bin_api.py` 新增 `list_video_projects_api` 与 `GET /minimax/clip_bin/projects`；新增 `web/long_builder_panel.js`、`web/long_builder.css`；README 中英文「长视频拼接」章节同步（面板、序号定序、选项表、日志取代 report）。
+- 2026-10-18：上游 Motion-Context 基线 `5335715`（0.6.2）→ `518c083`（0.7.1）。新增三个实验节点（Refine Blend / Join Match / Sigmas Tail：上游算法原样、节点类是 V3、id 带 `ClipStream` 后缀），移植 Save/Load Latent 的改进（`stock_format`、`folder`、`ui.latents`、路径安全），Chain 前端联动 refine 链路，重写 `scripts/sync_upstream.sh`。
+- 2026-10-18：新增 `tests/test_experiment_nodes.py`（47 用例），测试 147 → 194；`tests/test_node_schema.py` 扩到 14 个节点。

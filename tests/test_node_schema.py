@@ -22,9 +22,20 @@ PKG, PKG_ERROR = _support.load_plugin_package()
 CLIP_CATEGORY = "MiniMaxH3/ClipStream"
 CONTEXT_CATEGORY = "conditioning/minimax"
 
-# clipbin.long_nodes is the newest entry; another node module belongs here too.
+# The three upstream 0.7.1 experiment nodes keep the upstream categories, so a
+# graph built against the standalone package lands in the same menus here.
+EXPERIMENT_CATEGORIES = {
+    "MiniMaxH3RefineBlendClipStream": "latent/minimax",
+    "MiniMaxH3JoinMatchClipStream": "latent/minimax",
+    "MiniMaxH3SigmasTailClipStream": "sampling/custom_sampling/sigmas",
+}
+
+# clipbin.long_nodes is the newest clipbin entry; the three modules ported from
+# upstream 0.7.1 belong here too.
 MODULES = ("clipbin.nodes", "clipbin.dual_nodes", "clipbin.long_nodes",
-           "motion_context.nodes", "motion_context.probe_node")
+           "motion_context.nodes", "motion_context.probe_node",
+           "motion_context.refine_blend", "motion_context.join_match",
+           "motion_context.sigma_tools")
 
 EXPECTED_OUTPUTS = {
     "MiniMaxClipBinSaver": ["clip_id", "preview_image", "bin_path"],
@@ -37,7 +48,10 @@ EXPECTED_OUTPUTS = {
     "MiniMaxH3MotionContextSaveLatentClipStream": ["latent_path"],
     "MiniMaxH3MotionContextLoadLatentClipStream": ["LATENT"],
     "MiniMaxH3MotionContextChainClipStream": [],
-    "MiniMaxH3MotionContextSeamProbeClipStream": ["audio", "report"],
+"MiniMaxH3MotionContextSeamProbeClipStream": ["audio", "report"],
+    "MiniMaxH3RefineBlendClipStream": ["latent"],
+    "MiniMaxH3JoinMatchClipStream": ["samples"],
+    "MiniMaxH3SigmasTailClipStream": ["sigmas"],
 }
 
 # (input id, is_optional) in declaration order. Renaming or reordering one
@@ -69,11 +83,22 @@ EXPECTED_INPUTS = {
                                              ("audio", True), ("fps", True), ("match_tail", True)],
     "MiniMaxH3MotionContextSaveLatentClipStream": [("latent", False), ("filename_prefix", False),
                                                    ("clip_index", False)],
-    "MiniMaxH3MotionContextLoadLatentClipStream": [("latent_path", False), ("clip_index", False)],
+"MiniMaxH3MotionContextLoadLatentClipStream": [("latent_path", False), ("clip_index", False),
+                                                   ("stock_format", True), ("folder", True)],
     "MiniMaxH3MotionContextChainClipStream": [("segments", False)],
     "MiniMaxH3MotionContextSeamProbeClipStream": [("clip_b_untrimmed", False), ("trim_frames", False),
                                                   ("clip_a_latent", True), ("audio_vae", True),
                                                   ("fps", True), ("window_ms", True), ("search_ms", True)],
+    "MiniMaxH3RefineBlendClipStream": [("original", False), ("hold_frames", False),
+                                       ("blend_frames", False), ("audio", False),
+                                       ("use_refine", False), ("clip_index", False),
+                                       ("refined", True)],
+    "MiniMaxH3JoinMatchClipStream": [("samples", False), ("strength", False),
+                                     ("context_length", False), ("min_excess", False),
+                                     ("match_spread", False), ("min_excess_spread", False),
+                                     ("match_detail", False), ("min_excess_detail", False),
+                                     ("tuning", False), ("context_latent", True)],
+    "MiniMaxH3SigmasTailClipStream": [("sigmas", False), ("tail_steps", False), ("strength", False)],
 }
 
 PICKER_MODES = ['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制新建首段，无上下文)', 'Strict Chaining (必须接续指定或最新镜头)']
@@ -112,14 +137,21 @@ class TestNodeRegistry(unittest.TestCase):
         served = asyncio.run(PKG.H3ClipStreamExtension().get_node_list())
         self.assertEqual(sorted(cls.define_schema().node_id for cls in served), sorted(EXPECTED_OUTPUTS.keys()))
 
-    def test_motion_context_ids_keep_the_clipstream_suffix(self):
+    def test_ported_upstream_ids_keep_the_clipstream_suffix(self):
+        # The standalone upstream package registers these nodes without the
+        # suffix, so an installed copy must never collide with ours.
         for node_id in _schemas():
-            if node_id.startswith("MiniMaxH3MotionContext"):
+            if node_id.startswith("MiniMaxH3"):
                 self.assertTrue(node_id.endswith("ClipStream"), node_id)
 
     def test_categories_are_unchanged(self):
         for node_id, schema in _schemas().items():
-            expected = CONTEXT_CATEGORY if node_id.startswith("MiniMaxH3MotionContext") else CLIP_CATEGORY
+            if node_id in EXPERIMENT_CATEGORIES:
+                expected = EXPERIMENT_CATEGORIES[node_id]
+            elif node_id.startswith("MiniMaxH3MotionContext"):
+                expected = CONTEXT_CATEGORY
+            else:
+                expected = CLIP_CATEGORY
             self.assertEqual(schema.category, expected, node_id)
 
 
