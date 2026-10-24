@@ -17,6 +17,67 @@
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
+/* Primary execution mode, matching the H3 Segment Picker's large choices. */
+.minimax-clip-bin-mode-row {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    flex: 0 0 auto;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.minimax-clip-bin-mode-btn {
+    flex: 1 1 140px;
+    min-width: 120px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    background: #16202e;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.minimax-clip-bin-mode-btn:hover {
+    border-color: #60a5fa;
+    background: #243448;
+    color: #e2e8f0;
+}
+
+.minimax-clip-bin-mode-btn.active {
+    border-color: #60a5fa;
+    background: #1d4ed8;
+    color: #ffffff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.minimax-clip-bin-mode-btn.active:hover {
+    border-color: #93c5fd;
+    background: #2563eb;
+}
+
+.minimax-clip-bin-mode-btn:focus-visible {
+    outline: 2px solid #93c5fd;
+    outline-offset: 2px;
+}
+
+.minimax-clip-bin-mode-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.minimax-clip-bin-mode-hint {
+    flex: 1 1 100%;
+    color: #94a3b8;
+    font-size: 10px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
 /* Header bar */
 .minimax-clip-bin-header {
     display: flex;
@@ -651,19 +712,35 @@
 /* ===== Dual Clip Variant Badges ===== */
 .minimax-clip-variants {
     display: flex;
-    gap: 4px;
-    margin-top: 4px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 1px;
+    min-width: 0;
 }
 
 .variant-badge {
-    display: inline-block;
-    padding: 2px 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 5px;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 1px 5px;
     border-radius: 4px;
     font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.3px;
     line-height: 1.4;
+    white-space: nowrap;
+}
+
+.variant-name {
+    min-width: 0;
+}
+
+.variant-duration {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
 }
 
 .variant-badge.variant-a {

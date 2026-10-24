@@ -77,14 +77,94 @@ app.registerExtension({
     }
 });
 
+function dualVariantName(label, clip) {
+    if (label === "一采") return "一采·原始";
+    if (label === "二采") {
+        const parent = String(clip?.parent_clip_id || "").trim();
+        const initial = ["[INITIAL]", "[INITIAL_GENERATION]"].includes(parent.toUpperCase());
+        if (initial) return "二采·原始";
+        if (parent) return "二采·裁切后";
+    }
+    return label;
+}
+
 function setupClipBinPickerWidget(node) {
     // Find relevant widgets
     const projectWidget = node.widgets?.find(w => w.name === "project_name");
     const selectionWidget = node.widgets?.find(w => w.name === "clip_selection");
+    const modeWidget = node.widgets?.find(w => w.name === "mode");
 
     // Container DOM
     const container = document.createElement("div");
     container.className = "minimax-clip-bin-container";
+
+    // The hidden combo remains the serialized source of truth, so old workflows and
+    // the Python mode prefix checks keep their existing behavior.
+    const modeDefinitions = [
+        {
+            prefix: "Auto",
+            label: "🔁 自动接续",
+            hint: "空项目自动生成首段；已有卡片时自动接续最新镜头。",
+        },
+        {
+            prefix: "Force Initial",
+            label: "🎬 强制首段",
+            hint: "忽略库内历史素材，本次始终按无上下文的首段生成。",
+        },
+        {
+            prefix: "Strict Chaining",
+            label: "🔗 严格接续",
+            hint: "必须接续指定或最新镜头；项目为空时明确报错。",
+        },
+    ];
+    const modeRow = document.createElement("div");
+    modeRow.className = "minimax-clip-bin-mode-row";
+    const modeButtons = new Map();
+    const modeHint = document.createElement("div");
+    modeHint.className = "minimax-clip-bin-mode-hint";
+
+    function syncModeButtons() {
+        const current = String(modeWidget?.value || "");
+        const active = modeDefinitions.find(item => current.startsWith(item.prefix)) || modeDefinitions[0];
+        for (const item of modeDefinitions) {
+            const button = modeButtons.get(item.prefix);
+            if (!button) continue;
+            const selected = item.prefix === active.prefix;
+            button.classList.toggle("active", selected);
+            button.setAttribute("aria-pressed", String(selected));
+        }
+        modeHint.textContent = active.hint;
+    }
+
+    if (modeWidget) {
+        const values = Array.isArray(modeWidget.options?.values) ? modeWidget.options.values : [];
+        modeWidget.label = "运行模式";
+        modeWidget.options = modeWidget.options || {};
+        modeWidget.options.hidden = true;
+        for (const item of modeDefinitions) {
+            const value = values.find(candidate => String(candidate).startsWith(item.prefix));
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "minimax-clip-bin-mode-btn";
+            button.dataset.mode = item.prefix;
+            button.textContent = item.label;
+            button.title = `${item.hint}\n保存值：${value || item.prefix}`;
+            button.disabled = !value;
+            button.onclick = event => {
+                event.stopPropagation();
+                if (!value) return;
+                modeWidget.value = value;
+                modeWidget.callback?.(value);
+                syncModeButtons();
+                node.setDirtyCanvas?.(true, true);
+            };
+            modeButtons.set(item.prefix, button);
+            modeRow.appendChild(button);
+        }
+        modeRow.appendChild(modeHint);
+        container.appendChild(modeRow);
+        syncModeButtons();
+    }
 
     // Header
     const header = document.createElement("div");
@@ -278,7 +358,7 @@ function setupClipBinPickerWidget(node) {
                         .filter(([, v]) => v && v.has_latent)
                         .map(([label, v]) => `
                             <div class="minimax-modal-row">
-                                <span class="label">${label} 时长:</span>
+                                <span class="label">${dualVariantName(label, clip)} 时长:</span>
                                 <span class="value">${v.duration_seconds != null ? Number(v.duration_seconds).toFixed(2) + " 秒" : "?"}${v.frames ? ` (${v.frames} 帧)` : ""}</span>
                             </div>`);
                     return rows.join("") || `<div class="minimax-modal-row"><span class="label">规格参数:</span><span class="value">—</span></div>`;
@@ -410,6 +490,7 @@ function setupClipBinPickerWidget(node) {
 
     let requestId = 0;
     async function loadClips(deletedId = null) {
+        syncModeButtons();
         if (signal.aborted) return;
         const currentRequest = ++requestId;
         await loadProjects();
@@ -579,32 +660,40 @@ function setupClipBinPickerWidget(node) {
                     shotName.title = `${clip.shot_tag} (${clip.clip_id})`;
                     body.appendChild(shotName);
 
-                    // Metrics (real durations: probed from the archived video when available)
-                    const metrics = document.createElement("div");
-                    metrics.className = "minimax-clip-metrics";
-                    if (clip.variants) {
-                        const parts = [];
-                        for (const [label, v] of Object.entries(clip.variants)) {
-                            if (v && v.has_latent) {
-                                const durTxt = v.duration_seconds != null ? Number(v.duration_seconds).toFixed(2) + "s" : "?";
-                                parts.push(`<span>${label} ${durTxt}</span>`);
-                            }
-                        }
-                        metrics.innerHTML = parts.length ? parts.join("") : `<span>—</span>`;
-                    } else {
+                    if (!clip.variants) {
+                        // Metrics (real durations: probed from the archived video when available)
+                        const metrics = document.createElement("div");
+                        metrics.className = "minimax-clip-metrics";
                         const durTxt = clip.duration_seconds != null ? Number(clip.duration_seconds).toFixed(2) + "s" : "";
                         metrics.innerHTML = [clip.frames ? `${clip.frames}帧` : "", durTxt].filter(Boolean).join(" ") || `<span>—</span>`;
+                        body.appendChild(metrics);
                     }
-                    body.appendChild(metrics);
 
-                    // Variant badges (Dual Clip)
+                    // Dual variants already need a status row. Put the duration in that row
+                    // instead of repeating 一采/二采 in a separate metrics line above it.
                     if (clip.variants) {
                         const variantBar = document.createElement("div");
                         variantBar.className = "minimax-clip-variants";
-                        const hasA = clip.variants["一采"]?.has_latent;
-                        const hasB = clip.variants["二采"]?.has_latent;
-                        if (hasA) variantBar.innerHTML += `<span class="variant-badge variant-a">一采 ✓</span>`;
-                        if (hasB) variantBar.innerHTML += `<span class="variant-badge variant-b">二采 ✓</span>`;
+                        for (const [label, variant] of Object.entries(clip.variants)) {
+                            if (!variant?.has_latent) continue;
+                            const duration = variant.duration_seconds != null ? Number(variant.duration_seconds).toFixed(2) + "s" : "?";
+                            const badge = document.createElement("div");
+                            badge.className = `variant-badge ${label === "二采" ? "variant-b" : "variant-a"}`;
+                            if (label === "二采") {
+                                const parent = String(clip.parent_clip_id || "").trim();
+                                const initial = ["[INITIAL]", "[INITIAL_GENERATION]"].includes(parent.toUpperCase());
+                                if (initial) badge.title = "首段生成，不经过接续裁切。";
+                                else if (parent) badge.title = "接续生成的二采经过裁切，与一采时长不同属于正常现象。";
+                            }
+                            const name = document.createElement("span");
+                            name.className = "variant-name";
+                            name.textContent = dualVariantName(label, clip);
+                            const time = document.createElement("span");
+                            time.className = "variant-duration";
+                            time.textContent = duration;
+                            badge.append(name, time);
+                            variantBar.appendChild(badge);
+                        }
                         body.appendChild(variantBar);
                     }
 
@@ -816,6 +905,15 @@ function setupClipBinPickerWidget(node) {
         projectWidget.callback = function (v) {
             const r = origCallback ? origCallback.apply(this, arguments) : undefined;
             loadClips();
+            return r;
+        };
+    }
+
+    if (modeWidget) {
+        const origModeCallback = modeWidget.callback;
+        modeWidget.callback = function (v) {
+            const r = origModeCallback ? origModeCallback.apply(this, arguments) : undefined;
+            syncModeButtons();
             return r;
         };
     }
