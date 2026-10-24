@@ -3,7 +3,34 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
-## 2026-10-19 · `37e334f`（当前基线，= tag `v0.8.0`）
+## 2026-10-24 · `e42d748`（当前基线，= tag `v0.9.0`）
+
+- 快照：改动前的状态就是 `7b7cff1`（= tag `v0.8.0`），已在 `archive/2026-10-24-7b7cff1/`；提交后的快照在 `archive/2026-10-24-e42d748/`（50 个文件，由 `git archive v0.9.0` 解出，与提交内容逐字节相同）。
+- 本 tag 只含上面两条（Dual Picker 版本名称与时长合并、Picker 运行模式三枚大按钮），都只改 `web/clip_bin_picker.js` / `.css`。两条记录里的「未提交」字样已改成指向本 tag。
+- 本轮复跑核查：`python -m unittest discover -s tests` → `Ran 194 tests in 1.153s ... OK (skipped=1)`；`work/check_plugin_web.ps1` → `syntax failures: 0`；`work/sync_clipstream.ps1` → **50 files / mismatch 0 / stale 0**。
+- 本轮**没有**复跑需要浏览器与真实项目数据的探针：`work/dual_card_layout.mjs`（上一轮 3/3）与 `work/clip_picker_mode.mjs`（上一轮 8 passed）沿用上一轮的实测记录，不能算本轮复验。
+- 未验证：两种 Picker 的按钮与卡片最终视觉观感由用户实机确认。
+
+
+## 2026-10-24 · Dual Picker 版本名称与时长合并（已提交，见 Tag 线 v0.9.0）
+
+- 快照：`archive/2026-10-24-7b7cff1-dual-labels/` 保存本轮修改前完整工作树；`archive/2026-10-24-7b7cff1-dynamic-variant/` 保存动态血缘修正前工作树。
+- Dual Picker 卡片原先在时长行与徽标行重复显示「一采 / 二采」。现在合并为两条紧凑信息行：左侧版本名称、右侧对应实测时长，不再额外保留重复的第三行。名称按每张卡片的 `parent_clip_id` 决定：`[INITIAL]` / `[INITIAL_GENERATION]` 显示 `二采·原始`，真实父镜头 ID 的接续卡片显示 `二采·裁切后`，血缘缺失时只显示 `二采`，不乱贴裁切标签；一采始终显示 `一采·原始`。首段悬停说明「不经过接续裁切」，接续二采悬停说明「经过裁切，与一采时长不同属于正常现象」。预览弹窗使用同一套动态名称。
+- 普通 Picker 的非 variants 卡片、执行逻辑、保存数据与项目内容均不变。
+- 测试：全插件 JS 语法 **0 failures**；既有 Long Builder 布局回归 **16 passed**。独立 Chrome 读取现有项目 `1` 的真实 Dual 卡片（1 张首段 + 2 张接续）并缩到 520px 节点宽度，`work/dual_card_layout.mjs` → **3/3 passed**：首段/接续名称分别正确、旧重复时长行消失、名称与时长无重叠/溢出、裁切提示只用于接续；截图 `work/probe/dual-card-layout.png` 已生成。
+- 部署：已同步 ComfyUI 运行副本，只改 `web/clip_bin_picker.js` / `.css`，`Ctrl+F5` 后验收。已随 v0.9.0 提交并推送。
+
+## 2026-10-24 · Picker 运行模式大按钮（已提交，见 Tag 线 v0.9.0）
+
+- 快照：`archive/2026-10-24-7b7cff1/` 保存本轮改动前完整工作树。
+- `MiniMax H3 Clip Bin Picker` 与 `MiniMax H3 Dual Clip Picker` 的 `mode` 下拉框改为面板顶部三枚大按钮：`自动接续` / `强制首段` / `严格接续`，当前项高亮，下方显示该模式的一句话说明。视觉与 H3 Segment Picker 的裁切/投放大按钮一致。
+- 原 `mode` combo 仅隐藏，仍按原位置序列化；按钮写入完整原始选项字符串，Python 的 Auto / Force Initial / Strict 前缀判断、旧工作流与执行行为均不变。切换只写模式值，不重载卡片、不改变节点尺寸。
+- 修改文件：`web/clip_bin_picker.js`、`web/clip_bin_picker.css`。
+- 测试：`work/check_plugin_web.ps1` 两个插件 JS 语法 **0 failures**；Long Builder 既有 JS 回归 **16 + 9 passed**。独立 Chrome 以真实鼠标事件点击两种 Picker 的全部三个按钮，`work/clip_picker_mode.mjs` → **8 passed, 0 failed**，逐项确认完整模式值、唯一高亮/aria-pressed、说明文字与节点尺寸不变。
+- 部署：已同步 ComfyUI 运行副本，`web/clip_bin_picker.js` 与 `.css` 两个文件更新，全仓 **50 files / mismatch 0 / stale 0**。只改前端，`Ctrl+F5` 后验收。
+- 未做：节点最终视觉效果由用户实机确认。已随 v0.9.0 提交并推送。
+
+## 2026-10-19 · `37e334f`（上一基线，= tag `v0.8.0`）
 
 - 快照：`archive/2026-10-18-481aa42/`（46 个文件 / 661,667 字节，由 `git archive HEAD` 解出，与 `git ls-files` 一一对应）。
 - 该基线包含 `v0.7.6` 的全部内容（Long Builder 卡片上的屏蔽按钮 + 一键全部加回），且已运行时验证。
@@ -104,7 +131,8 @@
 | `v0.7.4` | `2b46aa2` | Clip Bin Picker 项目选单 + 选单内新建/删除项目（`create_project`、`delete_project`、`POST /minimax/clip_bin/project[/delete]`、`?videos_only=1`） |
 | `v0.7.5` | `ccb80ac` | Long Builder 卡片实测分辨率/时长 + 拖拽排序 + 首段生成不再误报接缝 + 卡片缩放换行与节点尺寸不漂移。运行时已验证 |
 | `v0.7.6` | `a211f5e` | Long Builder 卡片屏蔽改成卡片上的按钮（`⊘ 移出成片` / `↺ 加入成片`）+ 摘要行 `↺ 全部加回`；只改前端。已推送 `origin/main` |
-| `v0.8.0` | 待提交 | 上游 Motion-Context 0.7.1 的三个实验节点（Refine Blend / Join Match / Sigmas Tail）+ Save/Load Latent 改进 + Chain 联动 + `sync_upstream.sh` 重写；见本文件 2026-10-18 段 |
+| `v0.8.0` | `37e334f` | 上游 Motion-Context 0.7.1 的三个实验节点（Refine Blend / Join Match / Sigmas Tail）+ Save/Load Latent 改进 + Chain 联动 + `sync_upstream.sh` 重写；见本文件 2026-10-18 段 |
+| `v0.9.0` | `e42d748` | Dual Clip Picker 卡片把重复的「一采/二采」行合并成「版本名称 + 对应实测时长」两条紧凑信息行（名称按 `parent_clip_id` 决定：`[INITIAL]`/`[INITIAL_GENERATION]` = `二采·原始`，真实父镜头 = `二采·裁切后`，血缘缺失只写 `二采`；首段悬停说明不经过接续裁切），预览弹窗同一套名称；Clip Bin Picker 与 Dual Clip Picker 的 `mode` 下拉框改为面板顶部三枚大按钮（自动接续 / 强制首段 / 严格接续）+ 一句话说明，combo 只隐藏、仍按原位置序列化，Python 的 Auto / Force Initial / Strict 前缀判断与旧工作流不变。测试：`Ran 194 tests ... OK (skipped=1)`、JS 语法 0 failures、独立 Chrome `work/dual_card_layout.mjs` 3/3 与 `work/clip_picker_mode.mjs` 8 passed、运行副本 50 files / mismatch 0 / stale 0。已推送 `origin/main` 与 `v0.9.0` |
 
 > 上游仓库自己也有 `v0.7.0` / `v0.7.1` 这两个 tag，和我们这条线**同名不同指**。因此本次不用 `v0.7.7`，直接进 `v0.8.0`；`git tag -l` 里看到的 `v0.7.x` 全部是我们自己的（`git rev-list -n1 v0.7.x` 可核对指向）。
 
