@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _support
@@ -347,6 +348,58 @@ class TestConcatList(unittest.TestCase):
         self.assertTrue(text.startswith("ffconcat version 1.0"))
 
 
+class TestPlaybackSpeed(unittest.TestCase):
+    def test_presets_match_the_cutting_nodes(self):
+        self.assertEqual(lb.parse_playback_speed("1.0x"), 1.0)
+        self.assertEqual(lb.parse_playback_speed("0.75x"), 0.75)
+        self.assertEqual(lb.parse_playback_speed("0.5x"), 0.5)
+
+    def test_custom_uses_the_same_one_decimal_rule(self):
+        self.assertEqual(lb.parse_playback_speed("custom", 0.62), 0.6)
+        for bad in (0, -0.5, 1.1, "fast"):
+            with self.assertRaises(ValueError):
+                lb.parse_playback_speed("custom", bad)
+
+    def test_output_frame_rate_preserves_rendered_frames(self):
+        self.assertEqual(lb.output_frame_rate(24, 1.0), 24.0)
+        self.assertEqual(lb.output_frame_rate(24, 0.5), 48.0)
+        self.assertEqual(lb.output_frame_rate(24, 0.75), 32.0)
+        self.assertEqual(lb.output_frame_rate(24, 0.1), 240.0)
+
+    def test_tempo_chain_keeps_every_stage_in_the_portable_range(self):
+        chain = lb.atempo_filter(10.0)
+        stages = [float(item.split("=")[1]) for item in chain.split(",")]
+        self.assertTrue(all(0.5 <= stage <= 2.0 for stage in stages))
+        product = 1.0
+        for stage in stages:
+            product *= stage
+        self.assertAlmostEqual(product, 10.0)
+
+    def test_reencode_command_retimes_video_and_audio_together(self):
+        out_dir = _support.make_temp_dir("cs_long_cmd")
+        output_path = os.path.join(out_dir, "film.mp4")
+        completed = mock.Mock(returncode=0, stderr="")
+
+        def fake_run(cmd, **kwargs):
+            with open(cmd[-1], "wb") as stream:
+                stream.write(b"fake")
+            return completed
+
+        try:
+            with mock.patch.object(lb.shutil, "which", return_value="ffmpeg"), \
+                    mock.patch.object(lb.subprocess, "run", side_effect=fake_run) as run:
+                method, _ = lb.concat_videos(
+                    [os.path.join(out_dir, "part.mp4")], output_path, lb.JOIN_REENCODE,
+                    fps=48.0, has_audio=True, output_speed=2.0)
+            command = run.call_args[0][0]
+            self.assertEqual(method, "reencode")
+            self.assertIn("setpts=(PTS-STARTPTS)/2.00000000,fps=48.0", command)
+            self.assertIn("atempo=2.000000", command)
+            self.assertNotIn("-r", command)
+        finally:
+            _support.remove_temp_dir(out_dir)
+
+
 class BuildTestCase(unittest.TestCase):
     """Drives build_long_video against a throwaway bin with ffmpeg and ffprobe faked."""
 
@@ -364,8 +417,9 @@ class BuildTestCase(unittest.TestCase):
         lb.probe_video_streams = lambda path: self.probes.get(path)
         self.calls = []
 
-        def fake_concat(paths, output_path, mode, fps=24.0, has_audio=False):
-            self.calls.append({"paths": paths, "mode": mode, "fps": fps, "has_audio": has_audio})
+        def fake_concat(paths, output_path, mode, fps=24.0, has_audio=False, output_speed=1.0):
+            self.calls.append({"paths": paths, "mode": mode, "fps": fps,
+                               "has_audio": has_audio, "output_speed": output_speed})
             with open(output_path, "wb") as stream:
                 stream.write(b"fake")
             return ("copy" if mode == lb.JOIN_COPY else "reencode"), ""
@@ -408,12 +462,56 @@ class BuildTestCase(unittest.TestCase):
         self.assertEqual(len(self.calls[0]["paths"]), 3)
         self.assertTrue(self.calls[0]["paths"][0].replace("\\", "/").find("clip_a") > 0)
         self.assertEqual(self.calls[0]["mode"], lb.JOIN_COPY)
+        self.assertEqual(self.calls[0]["output_speed"], 1.0)
+        self.assertEqual(self.calls[0]["fps"], 24.0)
+        self.assertEqual(result["output_fps"], 24.0)
         self.assertEqual(result["total_frames"], 357)
         self.assertEqual(result["join_method"], "copy")
         self.assertEqual(result["warnings"], [])
         self.assertIn(os.path.join("h3_long", "Proj"), result["path"])
         self.assertTrue(os.path.isfile(result["path"]))
         self.assertIn("3 段", result["report"])
+
+    def test_existing_complete_probe_cache_avoids_remeasuring_segments(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        clip_dir = os.path.join(self.store, "Proj", "clip_a")
+        video_path = os.path.join(clip_dir, "video_二采.mp4")
+        measured = self.probes.pop(video_path)
+        stat = os.stat(video_path)
+        meta_path = os.path.join(clip_dir, "meta.json")
+        with open(meta_path, "r", encoding="utf-8") as stream:
+            meta = json.load(stream)
+        meta["video_probe"] = dict(measured, file="video_二采.mp4",
+                                   size=int(stat.st_size), mtime=int(stat.st_mtime))
+        with open(meta_path, "w", encoding="utf-8") as stream:
+            json.dump(meta, stream, ensure_ascii=False)
+
+        result = lb.build_long_video("Proj")
+
+        self.assertEqual(result["segments"][0]["width"], measured["width"])
+        self.assertEqual(result["segments"][0]["sample_rate"], measured["sample_rate"])
+        self.assertEqual(self.calls[0]["mode"], lb.JOIN_COPY)
+
+    def test_slowed_cutting_project_is_restored_while_joining(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "", duration=119 / 24.0)
+        result = lb.build_long_video("Proj", playback_speed="0.5x")
+        self.assertEqual(self.calls[0]["mode"], lb.JOIN_REENCODE)
+        self.assertEqual(self.calls[0]["output_speed"], 2.0)
+        self.assertEqual(self.calls[0]["fps"], 48.0)
+        self.assertEqual(result["playback_speed"], 0.5)
+        self.assertEqual(result["output_speed"], 2.0)
+        self.assertEqual(result["output_fps"], 48.0)
+        self.assertEqual(result["total_frames"], 119)
+        self.assertAlmostEqual(result["duration_seconds"], (119 / 24.0) / 2, places=3)
+        self.assertIn("原速恢复：切片 0.50x → 成片 2.0000x", result["report"])
+        self.assertIn("基准 24.000fps ÷ 切片 0.50x = 48.000fps", result["report"])
+
+    def test_copy_mode_rejects_speed_restoration(self):
+        self.add_card("Proj", "clip_a", "Shot 1", "")
+        with self.assertRaises(ValueError) as caught:
+            lb.build_long_video("Proj", join_mode=lb.JOIN_COPY, playback_speed="0.75x")
+        self.assertIn("恢复原速", str(caught.exception))
+        self.assertEqual(self.calls, [])
 
     def test_the_dragged_card_order_is_the_order_that_is_joined(self):
         self.add_card("Proj", "clip_a", "Shot 1", "")

@@ -34,6 +34,7 @@ from .clip_bin_manager import (
 # join, so it borrows the same variant choice and the same ffprobe reader the node
 # uses. long_builder only depends on clip_bin_manager, so this stays one-way.
 from .long_builder import (
+    cached_video_probe,
     pick_variant,
     probe_video_streams,
 )
@@ -103,10 +104,8 @@ def _video_probe_fields(clip_dir: str, video_file: str, entry: Dict[str, Any],
     except OSError:
         return empty, False
 
-    cached = entry.get(VIDEO_PROBE_KEY)
-    if (isinstance(cached, dict) and cached.get("file") == name
-            and cached.get("size") == int(stat.st_size)
-            and cached.get("mtime") == int(stat.st_mtime)):
+    cached = cached_video_probe(path, name, entry)
+    if cached is not None:
         return {
             "video_width": int(cached.get("width") or 0),
             "video_height": int(cached.get("height") or 0),
@@ -127,6 +126,11 @@ def _video_probe_fields(clip_dir: str, video_file: str, entry: Dict[str, Any],
         "fps": round(float(measured.get("fps") or 0.0), 3),
         "frames": int(measured.get("frames") or 0),
         "duration": round(float(measured.get("duration") or 0.0), 3),
+        "frames_estimated": bool(measured.get("frames_estimated")),
+        "has_audio": bool(measured.get("has_audio")),
+        "sample_rate": int(measured.get("sample_rate") or 0),
+        "vcodec": str(measured.get("vcodec") or ""),
+        "acodec": str(measured.get("acodec") or ""),
     }
     entry[VIDEO_PROBE_KEY] = record
     return {

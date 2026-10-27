@@ -22,6 +22,14 @@ import {
     thumbHeightFor,
     zoomPercent,
 } from "./long_builder_fit.js";
+import {
+    PLAYBACK_SPEED_OPTIONS,
+    normalizeCustomSpeed,
+    restoredDuration,
+    sourcePlaybackSpeed,
+    speedDescription,
+    speedOptionLabel,
+} from "./long_builder_speed.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
@@ -109,26 +117,72 @@ function parseExcluded(text) {
 // The panel's own floor, used both when the DOM widget is created and when the node is
 // sized: below this the deck overflows the node instead of getting smaller. One number for
 // both places, so the sizing maths cannot drift away from the widget.
-const PANEL_MIN_HEIGHT = 260;
+const PANEL_MIN_HEIGHT = 680;
+
+const JOIN_OPTION_LABELS = {
+    "auto（参数一致无损直拷，否则重编码）": "auto · 自动",
+    "copy（只允许无损直拷，参数不一致报错）": "copy · 无损直拷",
+    "reencode（统一重编码）": "reencode · 重编码",
+};
+
+function createSection(index, title, className) {
+    const section = document.createElement("section");
+    section.className = `h3-lb-section ${className}`;
+    const heading = document.createElement("div");
+    heading.className = "h3-lb-section-heading";
+    const number = document.createElement("span");
+    number.className = "h3-lb-section-index";
+    number.textContent = index;
+    const text = document.createElement("span");
+    text.className = "h3-lb-section-title";
+    text.textContent = title;
+    const actions = document.createElement("div");
+    actions.className = "h3-lb-section-actions";
+    heading.append(number, text, actions);
+    const body = document.createElement("div");
+    body.className = "h3-lb-section-body";
+    section.append(heading, body);
+    return { section, heading, body, actions };
+}
 
 function setupLongBuilderPanel(node) {
     const projectWidget = node.widgets?.find(w => w.name === "project_name");
     const excludeWidget = node.widgets?.find(w => w.name === "exclude_clips");
     const orderWidget = node.widgets?.find(w => w.name === "clip_order");
     const variantWidget = node.widgets?.find(w => w.name === "variant_policy");
+    const joinWidget = node.widgets?.find(w => w.name === "join_mode");
+    const fpsWidget = node.widgets?.find(w => w.name === "fps");
+    const outputNameWidget = node.widgets?.find(w => w.name === "output_name");
+    const speedWidget = node.widgets?.find(w => w.name === "playback_speed");
+    const speedCustomWidget = node.widgets?.find(w => w.name === "playback_speed_custom");
+
+    for (const widget of [
+        projectWidget, excludeWidget, orderWidget, variantWidget, joinWidget,
+        fpsWidget, outputNameWidget, speedWidget, speedCustomWidget,
+    ]) {
+        if (widget?.options) widget.options.hidden = true;
+    }
 
     const container = document.createElement("div");
     container.className = "minimax-clip-bin-container h3-lb-container";
 
-    const header = document.createElement("div");
-    header.className = "minimax-clip-bin-header";
-    const title = document.createElement("span");
-    title.className = "minimax-clip-bin-title h3-lb-title";
-    title.textContent = "🎬 长视频拼接";
+    const library = createSection("02", "项目与卡片", "h3-lb-library");
+    const projectRow = document.createElement("div");
+    projectRow.className = "h3-lb-project-row";
     const projectSelect = document.createElement("select");
     projectSelect.className = "minimax-clip-bin-project";
     projectSelect.title = "选择包含视频文件的项目文件夹";
-    // Card size lives next to the project picker because it changes what the deck shows.
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "minimax-clip-bin-refresh-btn";
+    refreshBtn.textContent = "🔄 刷新";
+    projectRow.append(projectSelect, refreshBtn);
+    library.body.appendChild(projectRow);
+
+    const cardToolbar = document.createElement("div");
+    cardToolbar.className = "h3-lb-card-toolbar";
+    const cardToolLabel = document.createElement("span");
+    cardToolLabel.className = "h3-lb-tool-label";
+    cardToolLabel.textContent = "卡片显示";
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "minimax-clip-bin-actions";
     const zoomOutBtn = document.createElement("button");
@@ -146,22 +200,16 @@ function setupLongBuilderPanel(node) {
     fitBtn.className = "minimax-clip-bin-refresh-btn";
     fitBtn.textContent = "⤢ 适应";
     fitBtn.title = "按当前宽度显示两行卡片（其余滚动）";
-    const refreshBtn = document.createElement("button");
-    refreshBtn.className = "minimax-clip-bin-refresh-btn";
-    refreshBtn.textContent = "🔄 刷新";
     actionsWrap.appendChild(zoomOutBtn);
     actionsWrap.appendChild(zoomLabel);
     actionsWrap.appendChild(zoomInBtn);
     actionsWrap.appendChild(fitBtn);
-    actionsWrap.appendChild(refreshBtn);
-    header.appendChild(title);
-    header.appendChild(projectSelect);
-    header.appendChild(actionsWrap);
-    container.appendChild(header);
+    cardToolbar.append(cardToolLabel, actionsWrap);
+    library.body.appendChild(cardToolbar);
 
     const summary = document.createElement("div");
     summary.className = "h3-lb-summary";
-    container.appendChild(summary);
+    library.body.appendChild(summary);
 
     // The deck order is the film order, so the panel says which rule it is using and
     // keeps the way back to shot-number order next to the cards it affects.
@@ -177,14 +225,21 @@ function setupLongBuilderPanel(node) {
     orderReset.hidden = true;
     orderBar.appendChild(orderHint);
     orderBar.appendChild(orderReset);
-    container.appendChild(orderBar);
+    library.body.appendChild(orderBar);
 
     const deck = document.createElement("div");
     deck.className = "minimax-clip-bin-deck h3-lb-deck";
-    container.appendChild(deck);
+    library.body.appendChild(deck);
 
-    const footer = document.createElement("div");
-    footer.className = "h3-lb-footer";
+    const settings = createSection("01", "拼接与速度", "h3-lb-settings");
+    const settingsGrid = document.createElement("div");
+    settingsGrid.className = "h3-lb-settings-grid";
+    settings.body.appendChild(settingsGrid);
+    const speedNote = document.createElement("div");
+    speedNote.className = "h3-lb-speed-note";
+    settings.body.appendChild(speedNote);
+
+    const preview = createSection("03", "成片预览", "h3-lb-preview");
     const footerText = document.createElement("span");
     footerText.className = "h3-lb-footer-text";
     footerText.textContent = "运行后在这里显示成片位置，节点上可直接预览。";
@@ -193,11 +248,118 @@ function setupLongBuilderPanel(node) {
     filmToggle.type = "button";
     filmToggle.disabled = true;
     filmToggle.textContent = "▶ 展开成片";
-    footer.appendChild(footerText);
-    footer.appendChild(filmToggle);
-    container.appendChild(footer);
+    preview.actions.appendChild(filmToggle);
+    preview.body.appendChild(footerText);
+
+    container.append(settings.section, library.section, preview.section);
 
     const { signal } = addPanel(node, "h3_long_builder", container, PANEL_MIN_HEIGHT);
+    const settingRecords = [];
+
+    function updateWidget(widget, value) {
+        widget.value = value;
+        widget.callback?.(value);
+        node.setDirtyCanvas?.(true, true);
+        refreshSettings();
+    }
+
+    function addSetting(widget, labelText, kind, config = {}) {
+        if (!widget) return;
+        const field = document.createElement("label");
+        field.className = "h3-lb-field";
+        field.dataset.field = widget.name;
+        const label = document.createElement("span");
+        label.className = "h3-lb-field-label";
+        const labelTextElement = document.createElement("span");
+        labelTextElement.textContent = labelText;
+        const note = document.createElement("span");
+        note.className = "h3-lb-field-note";
+        label.append(labelTextElement, note);
+        let control;
+        if (kind === "combo") {
+            control = document.createElement("select");
+            const configured = typeof widget.options?.values === "function"
+                ? widget.options.values() : widget.options?.values;
+            const values = config.values || (Array.isArray(configured) ? configured : []);
+            for (const value of values) {
+                const option = document.createElement("option");
+                option.value = String(value);
+                option.textContent = config.labels?.[value]
+                    ?? widget.options?.getOptionLabel?.(value) ?? String(value);
+                control.appendChild(option);
+            }
+        } else {
+            control = document.createElement("input");
+            control.type = kind === "number" ? "number" : "text";
+            if (kind === "number") {
+                control.min = String(config.min ?? widget.options?.min ?? "");
+                control.max = String(config.max ?? widget.options?.max ?? "");
+                control.step = String(config.step ?? widget.options?.step ?? "any");
+            } else {
+                control.placeholder = config.placeholder || "";
+            }
+        }
+        control.className = "h3-lb-field-control";
+        control.addEventListener("change", () => {
+            let value = control.value;
+            if (kind === "number") {
+                if (config.normalize) {
+                    value = config.normalize(control.value, widget.value);
+                } else {
+                    value = Number(control.value);
+                    if (!Number.isFinite(value)) value = Number(widget.value) || config.fallback || 0;
+                    const step = Number(config.step) || 0;
+                    if (step > 0) value = Math.round(value / step) * step;
+                    if (Number.isFinite(Number(config.min))) value = Math.max(Number(config.min), value);
+                    if (Number.isFinite(Number(config.max))) value = Math.min(Number(config.max), value);
+                    value = Number(value.toFixed(6));
+                }
+            }
+            updateWidget(widget, value);
+        }, { signal });
+        control.addEventListener("keydown", event => {
+            if (event.key === "Enter") control.blur();
+        }, { signal });
+        field.append(label, control);
+        settingsGrid.appendChild(field);
+        settingRecords.push({ field, widget, control, note, config });
+    }
+
+    function refreshSettings() {
+        for (const record of settingRecords) {
+            const { field, widget, control, note, config } = record;
+            const enabled = config.enabled ? Boolean(config.enabled()) : true;
+            control.disabled = !enabled;
+            field.classList.toggle("is-disabled", !enabled);
+            note.textContent = config.note?.() || "";
+            if (document.activeElement !== control) control.value = String(widget.value ?? "");
+        }
+        const sourceSpeed = sourcePlaybackSpeed(speedWidget?.value, speedCustomWidget?.value);
+        const copyConflict = sourceSpeed < 1 && String(joinWidget?.value || "").startsWith("copy");
+        speedNote.textContent = speedDescription(speedWidget?.value, speedCustomWidget?.value, fpsWidget?.value)
+            + (copyConflict ? " 当前 copy 不可恢复，请改用 auto / reencode。" : "");
+        speedNote.classList.toggle("is-warning", copyConflict);
+    }
+
+    addSetting(variantWidget, "视频变体", "combo");
+    addSetting(joinWidget, "拼接方式", "combo", { labels: JOIN_OPTION_LABELS });
+    addSetting(fpsWidget, "基准帧率", "number", {
+        min: 1, max: 240, step: 0.001,
+        enabled: () => !String(joinWidget?.value || "").startsWith("copy"),
+        note: () => String(joinWidget?.value || "").startsWith("copy") ? "copy 不用" : "",
+    });
+    addSetting(outputNameWidget, "输出文件名", "text", { placeholder: "留空自动命名" });
+    addSetting(speedWidget, "切片慢放倍率", "combo", {
+        values: PLAYBACK_SPEED_OPTIONS,
+        labels: Object.fromEntries(PLAYBACK_SPEED_OPTIONS.map(value => [value, speedOptionLabel(value)])),
+    });
+    addSetting(speedCustomWidget, "自定义慢放倍率", "number", {
+        min: 0.1, max: 1, step: 0.1,
+        normalize: normalizeCustomSpeed,
+        enabled: () => speedWidget?.value === "custom",
+        note: () => speedWidget?.value === "custom" ? "" : "仅 custom",
+    });
+    refreshSettings();
     const previewCleanups = new Set();
     const releasePreviews = () => {
         for (const cleanup of previewCleanups) cleanup();
@@ -491,7 +653,10 @@ function setupLongBuilderPanel(node) {
         }
     }
 
+    let lastDescription = null;
+
     function describe(joined, cards, offSet) {
+        lastDescription = { joined, cards, offSet };
         const names = joined.map(card => card.shot_tag || card.clip_id);
         const shown = names.length <= 8 ? names.join(" → ") : names.slice(0, 8).join(" → ") + " …";
         const lines = [];
@@ -499,8 +664,15 @@ function setupLongBuilderPanel(node) {
         const timed = joined.length > 0
             && joined.every(card => Number(card.video_duration_seconds) > 0);
         const total = joined.reduce((sum, card) => sum + Number(card.video_duration_seconds || 0), 0);
+        const sourceSpeed = sourcePlaybackSpeed(speedWidget?.value, speedCustomWidget?.value);
+        const restoredTotal = restoredDuration(total, speedWidget?.value, speedCustomWidget?.value);
+        const durationText = timed
+            ? sourceSpeed < 1
+                ? ` · 慢放 ${total.toFixed(1)} 秒 → 成片 ${restoredTotal.toFixed(1)} 秒`
+                : ` · 约 ${total.toFixed(1)} 秒`
+            : "";
         lines.push(joined.length
-            ? `将拼接 ${joined.length} 段${timed ? ` · 约 ${total.toFixed(1)} 秒` : ""}：${shown}`
+            ? `将拼接 ${joined.length} 段${durationText}：${shown}`
             : "没有可拼接的片段：卡片全被排除，或都没有归档视频");
         const usable = cards.filter(card => card.has_video);
         const offCount = usable.length - joined.length;
@@ -548,6 +720,7 @@ function setupLongBuilderPanel(node) {
     }
     let requestId = 0;
     async function loadCards() {
+        refreshSettings();
         const currentRequest = ++requestId;
         await loadProjects();
         if (signal.aborted || currentRequest !== requestId) return;
@@ -815,6 +988,29 @@ function setupLongBuilderPanel(node) {
         widget.callback = function (v) {
             const r = original ? original.apply(this, arguments) : undefined;
             loadCards();
+            return r;
+        };
+    }
+
+    for (const widget of [joinWidget, fpsWidget, outputNameWidget]) {
+        if (!widget) continue;
+        const original = widget.callback;
+        widget.callback = function (v) {
+            const r = original ? original.apply(this, arguments) : undefined;
+            refreshSettings();
+            return r;
+        };
+    }
+
+    for (const widget of [speedWidget, speedCustomWidget]) {
+        if (!widget) continue;
+        const original = widget.callback;
+        widget.callback = function (v) {
+            const r = original ? original.apply(this, arguments) : undefined;
+            refreshSettings();
+            if (lastDescription) {
+                describe(lastDescription.joined, lastDescription.cards, lastDescription.offSet);
+            }
             return r;
         };
     }

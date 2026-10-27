@@ -567,6 +567,16 @@ def probe_video_duration(video_path: str) -> Optional[float]:
         return None
 
 
+MP4_CHUNK_FRAMES = 8
+
+
+def _raw_video_chunks(images: torch.Tensor):
+    for start in range(0, int(images.shape[0]), MP4_CHUNK_FRAMES):
+        chunk = images[start:start + MP4_CHUNK_FRAMES]
+        yield (chunk.detach().clamp(0, 1).mul(255).to(torch.uint8)
+               .contiguous().cpu().numpy().tobytes())
+
+
 def encode_images_to_mp4(
     images: torch.Tensor,
     output_mp4_path: str,
@@ -588,15 +598,6 @@ def encode_images_to_mp4(
         W = W - (W % 2)
         H = H - (H % 2)
         images = images[:, :H, :W, :]
-
-    try:
-        # Use .numpy().tobytes(), NOT bytes(...untyped_storage()):
-        # on torch >= 2.12, bytes(storage) falls back to per-byte Python __getitem__
-        # (~2.5 us/byte -> multi-minute stalls on large clips; numpy path is ~0.06s for 362MB).
-        raw_bytes = images.detach().clamp(0, 1).mul(255).to(torch.uint8).contiguous().cpu().numpy().tobytes()
-    except Exception as e:
-        logger.warning("[Clip Bin] Failed to extract raw image bytes for video encoding: %s", e)
-        return False
 
     temp_wav_path = None
     cmd = [
@@ -645,20 +646,30 @@ def encode_images_to_mp4(
         output_mp4_path
     ])
 
+    proc = None
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        proc.communicate(input=raw_bytes)
-        success = proc.returncode == 0 and os.path.isfile(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for raw_bytes in _raw_video_chunks(images):
+                proc.stdin.write(raw_bytes)
+        finally:
+            proc.stdin.close()
+        returncode = proc.wait()
+        success = returncode == 0 and os.path.isfile(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
         if success:
             logger.info("[Clip Bin] Successfully encoded video asset to '%s' (%s frames, %.2fs)",
                         output_mp4_path, N, N / float(fps))
         else:
-            logger.warning("[Clip Bin] ffmpeg video encoding returned code %s", proc.returncode)
+            logger.warning("[Clip Bin] ffmpeg video encoding returned code %s", returncode)
         return success
     except Exception as e:
         logger.warning("[Clip Bin] Exception during ffmpeg encoding: %s", e)
         return False
     finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         if temp_wav_path and os.path.exists(temp_wav_path):
             try:
                 os.remove(temp_wav_path)

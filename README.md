@@ -154,7 +154,7 @@ Backed by `GET /minimax/clip_bin/projects` (every bin with its `clips` / `videos
 
 ### Long video assembly
 
-`Clip Long Builder` (`MiniMaxClipBinLongBuilder`) reads the MP4s that the Savers already archived inside each card and joins them in shot order, so the manual stitching step is gone. It is a read-side node: it never writes into a card, never touches a latent, and never re-encodes unless the segments cannot be joined as they are.
+`Clip Long Builder` (`MiniMaxClipBinLongBuilder`) reads the MP4s that the Savers already archived inside each card and joins them in shot order, so the manual stitching step is gone. It is a read-side node: it never writes into a card, never touches a latent, and only re-encodes when the segments cannot be joined as they are or slow-motion cuts are being restored to their original speed.
 
 **Canonical wiring** — the one rule that keeps both the bin and the long film clean:
 
@@ -172,6 +172,7 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 - **The button on the card is the switch** — `⊘ 移出成片` takes that segment out of the film, the picture dims, the card moves to the back of the deck with an 已排除 badge, and the button becomes `↺ 加入成片`. This is how a rejected take or a branch is skipped. The card itself is not clickable, so pointing at a card can never change the film by accident.
 - **Drag a card onto another to move it along the timeline** — the deck order *is* the film order, and the panel writes it into `clip_order`. Every joining card carries its position in the film (`#1`, `#2`, …), and `↺ 按镜头序号` puts the deck back on shot numbers.
 - **Each card shows the resolution and duration of its archived video** (`1088×1920 · 6.21s`) — measured with ffprobe once per file and cached in the card, never estimated from the latent. The summary line adds the total length of the film.
+- **Slow-motion cuts can be restored to their original speed** — choose the factor used when cutting and the Builder applies its reciprocal. The base frame rate is converted automatically (`24fps + 0.5x → 48fps`, `24fps + 0.75x → 32fps`) so restoring speed does not throw away rendered frames. Audio is retimed with `atempo` to preserve pitch.
 - The summary line says exactly what will be joined (`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`), what is excluded, and what has no archived video. While cards are switched off, that line carries a `↺ 全部加回` button.
 - **Card size is a 100%–400% zoom**, the same steps as the Clip Bin picker. It changes the cards only: the width you gave the node is never touched, and the rows you were looking at stay on screen. `⤢ 适应` sets the height to two rows at the current width and the rest scrolls.
 - **The node keeps the size you gave it.** Refresh, re-ordering, switching project and a new run redraw the cards but never resize the node — only `⤢ 适应` and the zoom buttons change its height, and a node that has never been sized is fitted once when it first gets cards.
@@ -187,7 +188,7 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 - A hole in the numbering (a take deleted from the bin) is named in the log; switching a card off in the panel is not a hole.
 - A card with no archived video is skipped and named in the log. The panel greys it out and will not select it.
 
-**Options** — all behind the advanced toggle; the panel writes the first three
+**Options** — the panel groups them into **Join & Speed / Project & Cards / Film Preview**, in that top-to-bottom order. It only hides the native widgets; their values stay in the original workflow positions.
 
 | Option | Notes |
 |--------|-------|
@@ -196,8 +197,10 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 | `project_name` | Written by the panel's project dropdown. Filling it by hand works too — press 刷新 afterwards.
 | `exclude_clips` | Written by the panel: the `clip_id`s switched off in the deck, comma separated. A shot-tag substring works here if you edit it by hand.
 | `clip_order` | Written by the panel when a card is dragged: the `clip_id`s in the order the film should play, comma separated. Empty means follow the shot numbers; `↺ 按镜头序号` in the panel clears it. Cards it does not name are appended by shot number, and a `clip_id` whose card was deleted is reported and skipped.
-| `fps` | Used only when re-encoding. Match the generation fps (24). |
+| `fps` | **Base frame rate**: match the generation fps (24). Ordinary re-encoding uses it directly. Speed restoration divides it by the slow-motion factor, so `0.5x` at 24fps outputs 48fps and `0.75x` outputs 32fps instead of dropping rendered frames. |
 | `output_name` | Optional. Default is `<project>_<n>shots_<timestamp>.mp4`. |
+| `playback_speed` | The slow-motion factor used when the cuts were made: `1.0x` (default, no change), `0.75x`, `0.5x`, or `custom`. The Builder applies the reciprocal to restore original speed, so `0.5x` produces a `2x` film. Output fps is derived from the base fps automatically; video and audio are retimed together, and audio uses `atempo` to keep its pitch. Any restoration requires re-encoding and is rejected in `copy` mode. |
+| `playback_speed_custom` | Custom slow-motion factor from `0.1` to `1.0`, step `0.1`; used only when `playback_speed` is `custom`. |
 
 **Pre-flight checks** — every segment is measured with ffprobe *before* anything is written:
 
@@ -457,7 +460,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 
 ### 长视频拼接
 
-`Clip Long Builder`（`MiniMaxClipBinLongBuilder`）读取 Saver 已经归档进卡片的 MP4，按镜头顺序拼成一个长视频——手动拼接这一步没了。它和 Picker 一样是只读侧节点：不写卡片、不碰 latent，除非各段本身接不起来，否则不重编码。
+`Clip Long Builder`（`MiniMaxClipBinLongBuilder`）读取 Saver 已经归档进卡片的 MP4，按镜头顺序拼成一个长视频——手动拼接这一步没了。它和 Picker 一样是只读侧节点：不写卡片、不碰 latent；只有各段本身接不起来，或用户选择恢复慢放切片的原速时才重编码。
 
 **规范接线**——让素材库和长片都保持干净的那一条规则：
 
@@ -468,13 +471,14 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 
 按这个接，每张卡片的视频就是观众该看到的画面，接缝不会重复一小段。已经用未裁版本归档过的卡片照样能拼，节点会自己发现（见下面的预检）。
 
-**面板就是操作界面**——节点上的控件全部收在高级开关后面：
+**面板就是操作界面**——从上到下按「拼接与速度 / 项目与卡片 / 成片预览」三区组织。原生控件只隐藏、不换位置，旧工作流保存的值不变：
 
 - **项目下拉框**只列出真正有归档视频的文件夹，名字后面直接标可用段数。不用手输。
 - **卡片墙**按影片播放顺序列出该项目全部卡片，鼠标停在卡片上就播放它归档的视频。
 - **卡片上的按钮就是开关**——`⊘ 移出成片` 把这一段移出成片：画面变灰、卡片移到卡片墙最后并打上「已排除」，按钮同时变成 `↺ 加入成片`，点一下它就回来。废掉的条、分叉的线就是这样跳过的。卡片本身不再可点，鼠标划过卡片不会误改成片。
 - **把卡片拖到另一张卡片旁边就是改时间轴**——卡片墙的顺序就是成片的顺序，面板会把它写进 `clip_order`。参与拼接的卡片左上角标着它在成片里的位置（`#1`、`#2`…），`↺ 按镜头序号` 一键恢复按序号排。
 - **每张卡片显示归档视频的实测分辨率与时长**（`1088×1920 · 6.21s`）——每个文件只跑一次 ffprobe，结果缓存在卡片里，不是按 latent 估算的。摘要行还会给出成片总时长。
+- **可恢复慢放切片的原速**：在「拼接与速度」里选择切片当初的慢放倍率即可，Builder 自动取倒数，不用自己算；`0.5x → 2x`、`0.75x → 约 1.333x`。基准帧率也会自动换算：`24fps + 0.5x → 48fps`、`24fps + 0.75x → 32fps`，恢复原速时不再丢弃渲染帧。视频和音频一起变速，音频用 `atempo` 保持音调。摘要会同时显示慢放时间轴与恢复后的成片时长。`1.0x` 完全保持旧行为；恢复速度必须重编码，因此不能与 `copy` 同时使用。
 - 摘要行写清将要拼什么（`将拼接 4 段 · 约 24.8 秒：Shot 1 → Shot 2 → Shot 4`）、排除了什么、哪些没有归档视频；有卡片被排除时，这一行带一个 `↺ 全部加回` 按钮，一键把整批卡片放回成片。
 - **卡片大小是 100%–400% 缩放**，与素材库选择器同一档位：只改卡片大小，不改你自己拖出来的节点宽度，并保持你正在看的那几行。`⤢ 适应` 按当前宽度显示两行，其余滚动。
 - **节点保持你给它的大小**：刷新、拖卡片、换项目和重新运行都只重画卡片，不会改节点尺寸；只有 `⤢ 适应` 和缩放按钮会改高度，从没被布局过的新节点在第一次出现卡片时自动适配一次。
@@ -490,7 +494,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 - 序号出现缺口（某条被从库里删了）会写进日志；在面板上点掉一张卡不算缺口。
 - 没有归档视频的卡片会被跳过并在日志里点名。面板把它置灰，也不允许选。
 
-**选项**——全部收在高级开关后面，前三项由面板写入
+**选项**——面板分区控制，原生输入仍按原位置序列化
 
 | 选项 | 说明 |
 |------|------|
@@ -499,8 +503,10 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | `project_name` | 面板的项目下拉框写入。手动填写也可以，填完点「刷新」。 |
 | `exclude_clips` | 面板写入：卡片上排除掉的 `clip_id`，逗号分隔。手动填写时写镜头标签的一部分也可以。 |
 | `clip_order` | 拖动卡片时由面板写入：按成片播放顺序排列的 `clip_id`，逗号分隔。留空就是按镜头序号；面板上的 `↺ 按镜头序号` 会清掉它。没点名的卡片按序号补在后面；卡片已被删除的 `clip_id` 只告警并跳过。 |
-| `fps` | 只在重编码时生效，应与生成时的帧率一致（24）。 |
+| `fps` | **基准帧率**：填写切片生成时的帧率（默认 24）。普通重编码直接按此值输出；恢复原速时自动除以慢放倍率，例如 `24fps + 0.5x → 48fps`、`24fps + 0.75x → 32fps`，避免恢复时丢帧。 |
 | `output_name` | 可选。默认 `<项目>_<段数>shots_<时间戳>.mp4`。 |
+| `playback_speed` | 切片当初的慢放倍率：`1.0x`（默认，不恢复）/ `0.75x` / `0.5x` / `custom`。Builder 自动按倒数恢复原速，例如 `0.5x → 2x`；输出帧率由基准帧率自动换算，音视频同步，音频 `atempo` 保音调。恢复必须重编码，`copy` 模式会明确报错。 |
+| `playback_speed_custom` | 自定义切片慢放倍率，范围 `0.1–1.0`、步进 `0.1`，只在上一项为 `custom` 时启用。 |
 
 **预检**——写任何东西之前，每一段都先用 ffprobe 实测：
 

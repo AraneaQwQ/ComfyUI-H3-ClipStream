@@ -22,6 +22,7 @@ Two rules keep the result honest:
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -53,6 +54,57 @@ JOIN_AUTO = "auto（参数一致无损直拷，否则重编码）"
 JOIN_COPY = "copy（只允许无损直拷，参数不一致报错）"
 JOIN_REENCODE = "reencode（统一重编码）"
 JOIN_MODES = (JOIN_AUTO, JOIN_COPY, JOIN_REENCODE)
+
+PLAYBACK_SPEED_OPTIONS = ("1.0x", "0.75x", "0.5x", "custom")
+
+
+def parse_playback_speed(playback_speed, playback_speed_custom=1.0) -> float:
+    """Returns the slow-motion factor stored by the cutting nodes, in (0, 1]."""
+    choice = str(playback_speed if playback_speed is not None else "1.0x").strip()
+    if choice.lower() == "custom":
+        try:
+            value = float(playback_speed_custom)
+        except (TypeError, ValueError):
+            raise ValueError("自定义切片慢放倍率必须是数字，收到 %r。" % (playback_speed_custom,))
+        value = round(value, 1)
+        if value <= 0 or value > 1.0:
+            raise ValueError("自定义切片慢放倍率必须在 (0, 1.0] 之间（收到 %s）。" % value)
+        return value
+    text = choice[:-1] if choice.lower().endswith("x") else choice
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError("未知的切片慢放倍率选项：%r。" % (playback_speed,))
+    if value <= 0 or value > 1.0:
+        raise ValueError("切片慢放倍率必须在 (0, 1.0] 之间（收到 %s）。" % value)
+    return value
+
+
+def output_frame_rate(base_fps, source_speed=1.0) -> float:
+    """Returns the output rate that keeps every rendered frame after retiming."""
+    base = float(base_fps)
+    source = float(source_speed)
+    if not math.isfinite(base) or base <= 0:
+        raise ValueError("基准帧率必须是大于 0 的数字。")
+    if not math.isfinite(source) or source <= 0:
+        raise ValueError("切片慢放倍率必须是大于 0 的数字。")
+    return base / source
+
+
+def atempo_filter(speed: float) -> str:
+    """Builds a pitch-preserving tempo chain compatible with older ffmpeg builds."""
+    remaining = float(speed)
+    if remaining <= 0:
+        raise ValueError("音频变速倍率必须大于 0。")
+    stages: List[float] = []
+    while remaining > 2.0:
+        stages.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5:
+        stages.append(0.5)
+        remaining /= 0.5
+    stages.append(remaining)
+    return ",".join("atempo=%.6f" % stage for stage in stages)
 
 
 def get_output_root() -> str:
@@ -293,6 +345,26 @@ def probe_video_streams(path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def cached_video_probe(path: str, video_file: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the card's complete probe cache when it still describes this file."""
+    cached = entry.get("video_probe")
+    if not isinstance(cached, dict):
+        return None
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    if (cached.get("file") != str(video_file or "")
+            or cached.get("size") != int(stat.st_size)
+            or cached.get("mtime") != int(stat.st_mtime)):
+        return None
+    keys = ("width", "height", "fps", "frames", "duration", "frames_estimated",
+            "has_audio", "sample_rate", "vcodec", "acodec")
+    if any(key not in cached for key in keys):
+        return None
+    return {key: cached[key] for key in keys}
+
+
 def classify_join(samples: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     """Decides whether every segment can be stream-copied into one file.
 
@@ -380,7 +452,8 @@ def concat_list_text(paths: List[str]) -> str:
 
 
 def concat_videos(paths: List[str], output_path: str, mode: str,
-                  fps: float = 24.0, has_audio: bool = False) -> Tuple[str, str]:
+                  fps: float = 24.0, has_audio: bool = False,
+                  output_speed: float = 1.0) -> Tuple[str, str]:
     """Runs ffmpeg over the concat list. Returns ("copy"|"reencode", stderr tail)."""
     ffmpeg_bin = shutil.which("ffmpeg")
     if not ffmpeg_bin:
@@ -396,9 +469,17 @@ def concat_videos(paths: List[str], output_path: str, mode: str,
         if mode == JOIN_COPY:
             cmd = base + ["-c", "copy", "-movflags", "+faststart", output_path]
         else:
-            cmd = base + ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), "-movflags", "+faststart"]
+            cmd = base + ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+            if abs(float(output_speed) - 1.0) > 1e-9:
+                cmd += ["-filter:v", "setpts=(PTS-STARTPTS)/%.8f,fps=%s"
+                        % (float(output_speed), fps)]
+            else:
+                cmd += ["-r", str(fps)]
+            cmd += ["-movflags", "+faststart"]
             if has_audio:
                 cmd += ["-c:a", "aac", "-b:a", "192k"]
+                if abs(float(output_speed) - 1.0) > 1e-9:
+                    cmd += ["-filter:a", atempo_filter(output_speed)]
             cmd.append(output_path)
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if proc.returncode != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
@@ -419,13 +500,18 @@ def build_long_video(project_name: str,
                      variant_policy: str = VARIANT_PREFER_UP,
                      join_mode: str = JOIN_AUTO,
                      fps: float = 24.0,
-                     output_name: str = "") -> Dict[str, Any]:
+                     output_name: str = "",
+                     playback_speed: str = "1.0x",
+                     playback_speed_custom: float = 1.0) -> Dict[str, Any]:
     """Joins a project's archived videos into one MP4, in the panel's card order.
 
     Returns a dict with path, filename, subfolder, total_frames, duration_seconds,
     segments, warnings, join_method and a human-readable report.
     """
     p_name = (project_name or "Default_Project").strip()
+    source_speed = parse_playback_speed(playback_speed, playback_speed_custom)
+    output_speed = 1.0 / source_speed
+    output_fps = output_frame_rate(fps, source_speed)
     clips = list_bin_clips(p_name)
     chain, warnings = resolve_shot_order(clips, exclude_clips, clip_order)
     if not chain:
@@ -433,17 +519,18 @@ def build_long_video(project_name: str,
     warnings.extend(numbering_gaps(clips))
 
     project_dir = get_project_dir(p_name)
+    clips_by_id = {c.get("clip_id"): c for c in clips}
     segments: List[Dict[str, Any]] = []
     missing: List[str] = []
     for clip_id in chain:
-        meta = next((c for c in clips if c.get("clip_id") == clip_id), {})
+        meta = clips_by_id.get(clip_id, {})
         label = "%s（%s）" % (meta.get("shot_tag") or clip_id, clip_id)
         variant, video_file, variant_meta = pick_variant(meta, variant_policy)
         video_path = os.path.join(project_dir, clip_id, video_file) if video_file else ""
         if not video_path or not os.path.isfile(video_path):
             missing.append("%s [%s]" % (label, variant) if variant else label)
             continue
-        probe = probe_video_streams(video_path)
+        probe = cached_video_probe(video_path, video_file, meta) or probe_video_streams(video_path)
         if probe is None:
             raise ValueError("h3_clipstream: 读不到「%s」的视频参数（%s）。请确认 ffprobe 可用，"
                              "且该文件没有被其他程序占用。" % (label, video_path))
@@ -470,11 +557,14 @@ def build_long_video(project_name: str,
     if join_mode == JOIN_COPY and not can_copy:
         raise ValueError("h3_clipstream: 各段参数不一致，无损直拷会出坏片：" + "；".join(mismatch) +
                          "。请改用 auto 或 reencode。")
+    if join_mode == JOIN_COPY and source_speed < 1.0:
+        raise ValueError("h3_clipstream: 恢复原速必须重编码，copy 无损直拷无法改变播放速度。"
+                         "请改用 auto 或 reencode，或把切片慢放倍率设为 1.0x。")
     if not can_copy:
         warnings.append("各段参数不一致，已改用重编码统一：" + "；".join(mismatch))
 
     mode = JOIN_COPY if can_copy else JOIN_REENCODE
-    if join_mode == JOIN_REENCODE:
+    if join_mode == JOIN_REENCODE or source_speed < 1.0:
         mode = JOIN_REENCODE
 
     slug = re.sub(r"[^0-9A-Za-z_-]+", "_", sanitize_project_name(p_name)) or "project"
@@ -489,16 +579,22 @@ def build_long_video(project_name: str,
 
     join_method, _stderr = concat_videos(
         [segment["video_path"] for segment in segments], out_path, mode,
-        fps=fps, has_audio=any(segment.get("has_audio") for segment in segments))
+        fps=output_fps, has_audio=any(segment.get("has_audio") for segment in segments),
+        output_speed=output_speed)
 
-    total_frames = sum(int(segment.get("frames") or 0) for segment in segments)
-    duration = sum(float(segment.get("duration") or 0.0) for segment in segments)
+    source_frames = sum(int(segment.get("frames") or 0) for segment in segments)
+    duration = sum(float(segment.get("duration") or 0.0)
+                   for segment in segments) / output_speed
+    total_frames = (source_frames if join_method == "copy"
+                    else int(round(duration * output_fps)))
     final_probe = probe_video_streams(out_path)
     if final_probe and final_probe.get("frames"):
         total_frames = int(final_probe["frames"])
         duration = float(final_probe.get("duration") or duration)
 
-    report = format_report(p_name, segments, out_path, join_method, total_frames, duration, warnings)
+    report = format_report(p_name, segments, out_path, join_method, total_frames, duration, warnings,
+                           source_speed=source_speed, output_speed=output_speed,
+                           base_fps=float(fps), output_fps=output_fps)
     logger.info("[Long Builder] '%s' -> '%s' (%d frames, %.2fs, %s)",
                 p_name, out_path, total_frames, duration, join_method)
     return {
@@ -510,13 +606,19 @@ def build_long_video(project_name: str,
         "segments": segments,
         "warnings": warnings,
         "join_method": join_method,
+        "playback_speed": source_speed,
+        "output_speed": output_speed,
+        "base_fps": float(fps),
+        "output_fps": output_fps,
         "report": report,
     }
 
 
 def format_report(project_name: str, segments: List[Dict[str, Any]], output_path: str,
                   join_method: str, total_frames: int, duration: float,
-                  warnings: List[str]) -> str:
+                  warnings: List[str], source_speed: float = 1.0,
+                  output_speed: float = 1.0, base_fps: float = 24.0,
+                  output_fps: Optional[float] = None) -> str:
     """Renders the per-segment audit that the node returns as its report output."""
     lines = ["长视频拼接报告 · 项目「%s」" % project_name,
              "镜头顺序（%d 段）：" % len(segments)]
@@ -528,6 +630,13 @@ def format_report(project_name: str, segments: List[Dict[str, Any]], output_path
             segment.get("width"), segment.get("height"), float(segment.get("fps") or 0),
             int(segment.get("frames") or 0), float(segment.get("duration") or 0), audio))
     lines.append("拼接方式：%s" % ("无损直拷（未重编码）" if join_method == "copy" else "重编码统一"))
+    if source_speed < 1.0:
+        lines.append("原速恢复：切片 %.2fx → 成片 %.4fx（音频 atempo 保音调）"
+                     % (source_speed, output_speed))
+        if output_fps is None:
+            output_fps = output_frame_rate(base_fps, source_speed)
+        lines.append("输出帧率：基准 %.3ffps ÷ 切片 %.2fx = %.3ffps（保留渲染帧）"
+                     % (float(base_fps), source_speed, output_fps))
     lines.append("输出：%s  共 %d 帧 / %.2fs" % (output_path, total_frames, duration))
     if warnings:
         lines.append("注意：")

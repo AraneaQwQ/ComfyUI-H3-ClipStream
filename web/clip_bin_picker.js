@@ -67,7 +67,7 @@ app.registerExtension({
             const r = onExecuted ? onExecuted.apply(this, arguments) : undefined;
             // Prevent ComfyUI from displaying default preview image in this picker node
             this.imgs = null;
-            this._h3ClipRefresh?.();
+            this._h3ClipExecutionRefresh?.();
             return r;
         };
 
@@ -399,7 +399,6 @@ function setupClipBinPickerWidget(node) {
             }
             updateSelectionDisplay(clip.shot_tag ? `${clip.shot_tag} (${clip.clip_id.slice(-8)})` : clip.clip_id);
             closeModal();
-            loadClips();
         };
 
         const closeBtn = document.createElement("button");
@@ -489,6 +488,15 @@ function setupClipBinPickerWidget(node) {
     }
 
     let requestId = 0;
+    let executionRefreshTimer = null;
+    function scheduleExecutionRefresh() {
+        clearTimeout(executionRefreshTimer);
+        executionRefreshTimer = setTimeout(() => {
+            executionRefreshTimer = null;
+            if (!signal.aborted) void loadClips();
+        }, 60);
+    }
+    signal.addEventListener("abort", () => clearTimeout(executionRefreshTimer), { once: true });
     async function loadClips(deletedId = null) {
         syncModeButtons();
         if (signal.aborted) return;
@@ -541,7 +549,6 @@ function setupClipBinPickerWidget(node) {
                     selectionWidget.callback?.(selectionWidget.value);
                 }
                 updateSelectionDisplay("latest");
-                loadClips();
             };
             deck.appendChild(autoCard);
 
@@ -734,7 +741,6 @@ function setupClipBinPickerWidget(node) {
                             selectionWidget.callback?.(selectionWidget.value);
                         }
                         updateSelectionDisplay(clip.shot_tag ? `${clip.shot_tag} (${clip.clip_id.slice(-8)})` : clip.clip_id);
-                        loadClips();
                     };
 
                     deck.appendChild(card);
@@ -937,11 +943,13 @@ function setupClipBinPickerWidget(node) {
     api.addEventListener("minimax/clip_bin/changed", onDeleted);
     signal.addEventListener("abort", () => api.removeEventListener("minimax/clip_bin/changed", onDeleted), { once: true });
     node._h3ClipRefresh = loadClips;
-    const onExecuted = () => loadClips();
+    node._h3ClipExecutionRefresh = scheduleExecutionRefresh;
+    const onExecuted = scheduleExecutionRefresh;
     api.addEventListener("execution_success", onExecuted);
     signal.addEventListener("abort", () => {
         api.removeEventListener("execution_success", onExecuted);
         delete node._h3ClipRefresh;
+        delete node._h3ClipExecutionRefresh;
     }, { once: true });
     loadClips();
 }
