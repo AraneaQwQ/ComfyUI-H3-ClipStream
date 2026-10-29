@@ -154,7 +154,7 @@ Backed by `GET /minimax/clip_bin/projects` (every bin with its `clips` / `videos
 
 ### Long video assembly
 
-`Clip Long Builder` (`MiniMaxClipBinLongBuilder`) reads the MP4s that the Savers already archived inside each card and joins them in shot order, so the manual stitching step is gone. It is a read-side node: it never writes into a card, never touches a latent, and only re-encodes when the segments cannot be joined as they are or slow-motion cuts are being restored to their original speed.
+`Clip Long Builder` (`MiniMaxClipBinLongBuilder`) reads the MP4s that the Savers already archived inside each card and joins them in shot order, so the manual stitching step is gone. It is a read-side node: it never writes into a card and never touches a latent. Uniform silent projects remain a full stream copy; uniform projects with audio stream-copy the video and rebuild the independent AAC segments once on a continuous sample timeline. Mismatched projects and speed restoration re-encode both streams.
 
 **Canonical wiring** — the one rule that keeps both the bin and the long film clean:
 
@@ -193,7 +193,7 @@ Feed it that way and every card's video is exactly what the viewer should see, s
 | Option | Notes |
 |--------|-------|
 | `variant_policy` | **优先二采** (default: use the 二采 video when the card has one, otherwise fall back to 一采) / **仅一采** / **仅二采**. Cards that only hold one variant ignore the policy. |
-| `join_mode` | **auto** (default): lossless `-c copy` when every segment matches, otherwise re-encode to unify. **copy**: hard error on any mismatch — for projects you have verified are uniform. **reencode**: always re-encode; this is how you force mixed-resolution history together. |
+| `join_mode` | **auto** (default): stream-copy matching video; when audio exists, normalize it into one continuous AAC track to remove per-segment encoder delay. Mismatched projects re-encode both streams. **copy**: require matching video parameters; video is copied, while present audio is still normalized. **reencode**: always re-encode both streams; this is how you force mixed-resolution history together. The serialized option strings keep their older wording for saved-workflow compatibility. |
 | `project_name` | Written by the panel's project dropdown. Filling it by hand works too — press 刷新 afterwards.
 | `exclude_clips` | Written by the panel: the `clip_id`s switched off in the deck, comma separated. A shot-tag substring works here if you edit it by hand.
 | `clip_order` | Written by the panel when a card is dragged: the `clip_id`s in the order the film should play, comma separated. Empty means follow the shot numbers; `↺ 按镜头序号` in the panel clears it. Cards it does not name are appended by shot number, and a `clip_id` whose card was deleted is reported and skipped.
@@ -460,7 +460,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 
 ### 长视频拼接
 
-`Clip Long Builder`（`MiniMaxClipBinLongBuilder`）读取 Saver 已经归档进卡片的 MP4，按镜头顺序拼成一个长视频——手动拼接这一步没了。它和 Picker 一样是只读侧节点：不写卡片、不碰 latent；只有各段本身接不起来，或用户选择恢复慢放切片的原速时才重编码。
+`Clip Long Builder`（`MiniMaxClipBinLongBuilder`）读取 Saver 已经归档进卡片的 MP4，按镜头顺序拼成一个长视频——手动拼接这一步没了。它和 Picker 一样是只读侧节点：不写卡片、不碰 latent。参数一致的无声项目仍完全直拷；参数一致的有声项目保持视频无损直拷，但会把各段独立 AAC 音轨解码一次并重建为连续时间轴。参数不一致或恢复慢放原速时才重编码音视频。
 
 **规范接线**——让素材库和长片都保持干净的那一条规则：
 
@@ -499,7 +499,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | 选项 | 说明 |
 |------|------|
 | `variant_policy` | **优先二采**（默认：卡片有二采视频就用二采，没有则退回一采）/ **仅一采** / **仅二采**。只归档了一个变体的卡片忽略该策略。 |
-| `join_mode` | **auto**（默认）：各段参数一致时无损直拷 `-c copy`，不一致自动重编码统一。**copy**：只允许直拷，参数不一致直接报错——用于确认过参数一致的项目。**reencode**：一律重编码，把不同分辨率的历史片段强行接在一起就用它。 |
+| `join_mode` | **auto**（默认）：参数一致时视频直拷；有音频时把多段 AAC 归一为一条连续音轨，消除每段编码延迟。参数不一致时重编码音视频。**copy**：要求视频参数一致，视频仍直拷；存在音频时仍会归一化重编码音轨。**reencode**：音视频一律重编码。为兼容旧工作流，控件序列化的旧选项文字保持不变。 |
 | `project_name` | 面板的项目下拉框写入。手动填写也可以，填完点「刷新」。 |
 | `exclude_clips` | 面板写入：卡片上排除掉的 `clip_id`，逗号分隔。手动填写时写镜头标签的一部分也可以。 |
 | `clip_order` | 拖动卡片时由面板写入：按成片播放顺序排列的 `clip_id`，逗号分隔。留空就是按镜头序号；面板上的 `↺ 按镜头序号` 会清掉它。没点名的卡片按序号补在后面；卡片已被删除的 `clip_id` 只告警并跳过。 |
