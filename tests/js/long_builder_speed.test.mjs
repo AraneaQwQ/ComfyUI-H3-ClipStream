@@ -43,5 +43,6 @@ test("labels explain the result without mental arithmetic", () => {
     assert.match(speedDescription("0.75x", 1.0, 24), /1\.333x/);
     assert.match(speedDescription("0.75x", 1.0, 24), /32\.000fps/);
     assert.match(speedDescription("0.5x", 1.0, 24), /48\.000fps/);
-    assert.match(speedDescription("1.0x"), /无损直拷/);
+    assert.match(speedDescription("1.0x"), /视频直拷/);
+    assert.match(speedDescription("1.0x"), /音频.*归一化重编码/);
 });
