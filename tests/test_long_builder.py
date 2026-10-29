@@ -32,11 +32,12 @@ def variant(video=None, frames=0):
 
 
 def probe(width=1280, height=720, fps=24.0, frames=124, duration=5.166,
-          has_audio=True, sample_rate=32000, frames_estimated=False):
+          has_audio=True, sample_rate=32000, frames_estimated=False,
+          vcodec="h264", acodec="aac"):
     return {"width": width, "height": height, "fps": fps, "frames": frames,
             "duration": duration, "frames_estimated": frames_estimated,
             "has_audio": has_audio, "sample_rate": sample_rate,
-            "vcodec": "h264", "acodec": "aac" if has_audio else ""}
+            "vcodec": vcodec, "acodec": acodec if has_audio else ""}
 
 
 class TestShotOrder(unittest.TestCase):
@@ -264,6 +265,11 @@ class TestJoinDecision(unittest.TestCase):
         self.assertFalse(can_copy)
         self.assertIn("帧率", reasons[0])
 
+    def test_video_codec_difference_forces_a_reencode(self):
+        can_copy, reasons = lb.classify_join([probe(vcodec="h264"), probe(vcodec="hevc")])
+        self.assertFalse(can_copy)
+        self.assertTrue(any("h264" in reason and "hevc" in reason for reason in reasons))
+
     def test_mixed_audio_presence_forces_a_reencode(self):
         can_copy, reasons = lb.classify_join([probe(), probe(has_audio=False)])
         self.assertFalse(can_copy)
@@ -348,6 +354,47 @@ class TestConcatList(unittest.TestCase):
         self.assertTrue(text.startswith("ffconcat version 1.0"))
 
 
+class TestConcatCommand(unittest.TestCase):
+    def _capture(self, has_audio):
+        out_dir = _support.make_temp_dir("cs_long_copy_cmd")
+        output_path = os.path.join(out_dir, "film.mp4")
+        completed = mock.Mock(returncode=0, stderr="")
+
+        def fake_run(cmd, **kwargs):
+            with open(cmd[-1], "wb") as stream:
+                stream.write(b"fake")
+            return completed
+
+        try:
+            with mock.patch.object(lb.shutil, "which", return_value="ffmpeg"), \
+                    mock.patch.object(lb.subprocess, "run", side_effect=fake_run) as run:
+                method, _ = lb.concat_videos(
+                    [os.path.join(out_dir, "part.mp4")], output_path, lb.JOIN_COPY,
+                    fps=24.0, has_audio=has_audio)
+            return method, run.call_args[0][0]
+        finally:
+            _support.remove_temp_dir(out_dir)
+
+    def test_audio_copy_mode_keeps_video_but_rebuilds_one_continuous_audio_timeline(self):
+        method, command = self._capture(has_audio=True)
+        joined = " ".join(command)
+
+        self.assertEqual(method, "video_copy_audio_reencode")
+        self.assertIn("-copyts", command)
+        self.assertEqual(command[command.index("-c:v") + 1], "copy")
+        self.assertEqual(command[command.index("-c:a") + 1], "aac")
+        self.assertIn("asetpts=N/SR/TB", joined)
+        self.assertEqual(command[command.index("-avoid_negative_ts") + 1], "disabled")
+        self.assertNotIn("-c copy", joined)
+
+    def test_silent_copy_mode_remains_a_full_stream_copy(self):
+        method, command = self._capture(has_audio=False)
+
+        self.assertEqual(method, "copy")
+        self.assertEqual(command[command.index("-c") + 1], "copy")
+        self.assertNotIn("-c:a", command)
+
+
 class TestPlaybackSpeed(unittest.TestCase):
     def test_presets_match_the_cutting_nodes(self):
         self.assertEqual(lb.parse_playback_speed("1.0x"), 1.0)
@@ -394,7 +441,7 @@ class TestPlaybackSpeed(unittest.TestCase):
             command = run.call_args[0][0]
             self.assertEqual(method, "reencode")
             self.assertIn("setpts=(PTS-STARTPTS)/2.00000000,fps=48.0", command)
-            self.assertIn("atempo=2.000000", command)
+            self.assertIn("asetpts=PTS-STARTPTS,atempo=2.000000", command)
             self.assertNotIn("-r", command)
         finally:
             _support.remove_temp_dir(out_dir)
@@ -422,7 +469,11 @@ class BuildTestCase(unittest.TestCase):
                                "has_audio": has_audio, "output_speed": output_speed})
             with open(output_path, "wb") as stream:
                 stream.write(b"fake")
-            return ("copy" if mode == lb.JOIN_COPY else "reencode"), ""
+            if mode == lb.JOIN_COPY and has_audio:
+                method = "video_copy_audio_reencode"
+            else:
+                method = "copy" if mode == lb.JOIN_COPY else "reencode"
+            return method, ""
 
         lb.concat_videos = fake_concat
 
@@ -466,8 +517,11 @@ class BuildTestCase(unittest.TestCase):
         self.assertEqual(self.calls[0]["fps"], 24.0)
         self.assertEqual(result["output_fps"], 24.0)
         self.assertEqual(result["total_frames"], 357)
-        self.assertEqual(result["join_method"], "copy")
-        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["join_method"], "video_copy_audio_reencode")
+        self.assertEqual(len(result["warnings"]), 1)
+        self.assertIn("视频保持无损直拷", result["warnings"][0])
+        self.assertIn("音频已归一化重编码", result["warnings"][0])
+        self.assertIn("拼接方式：视频无损直拷 + 音频时间轴归一化重编码", result["report"])
         self.assertIn(os.path.join("h3_long", "Proj"), result["path"])
         self.assertTrue(os.path.isfile(result["path"]))
         self.assertIn("3 段", result["report"])

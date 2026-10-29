@@ -58,7 +58,7 @@ class MiniMaxClipBinLongBuilderNode(io.ComfyNode):
                 io.Combo.Input('variant_policy', options=list(VARIANT_POLICIES), advanced=True, default=VARIANT_PREFER_UP,
                                tooltip='【取哪个变体的视频】\n• 优先二采：卡片里有二采视频就用二采，没有则退回一采（推荐）。\n• 仅一采 / 仅二采：只用指定变体；该段没有这个变体时会被跳过并在日志里说明。'),
                 io.Combo.Input('join_mode', options=list(JOIN_MODES), advanced=True, default=JOIN_AUTO,
-                               tooltip='【拼接方式】\n• auto：分辨率/帧率/音频参数一致时无损直拷（最快、不损画质），不一致时自动重编码统一。\n• copy：只允许无损直拷，参数不一致直接报错，适合确认过参数一致的项目。\n• reencode：一律重编码，用来把不同分辨率的历史片段强行接在一起。'),
+                               tooltip='【拼接方式】\n• auto：参数一致时视频无损直拷；有音频时只把音频归一化重编码以消除分段 AAC 延迟，不一致时音视频重编码统一。\n• copy：要求视频参数一致；视频直拷，有音频时仍会归一化重编码音轨。\n• reencode：音视频一律重编码，用来把不同分辨率的历史片段强行接在一起。'),
                 io.Float.Input('fps', optional=True, advanced=True, default=24.0, min=1.0, max=240.0, step=0.001,
                                tooltip='【基准帧率】填写切片生成时的帧率（默认 24）。普通重编码按此值输出；恢复原速时自动除以慢放倍率，例如 24fps + 0.5x → 48fps、24fps + 0.75x → 32fps，避免恢复时丢帧。'),
                 io.String.Input('output_name', optional=True, advanced=True, default='',

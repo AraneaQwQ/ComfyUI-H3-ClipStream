@@ -3,6 +3,16 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
+## 2026-10-29 · 帧精确归档 + Long Builder 分段 AAC 时间轴修复（`fix/frame-exact-av-sync`）
+
+- 改动前快照：`archive/2026-10-29-6eb3344-frame-exact-av/`，保存本轮修改前的 `6eb3344` 完整 Git 基线；`archive/` 继续由 `.gitignore` 排除，不进入提交。
+- Clip Bin 根因与修复：H3 的音频长度按采样点取整后可能比 `帧数 ÷ fps` 短不到一个采样点，旧命令的 `-shortest` 会因此删掉最后一帧，而 AAC padding 又会让容器时长看似正常。现在以图像批次为权威，显式限制 `-frames:v`，把音频 pad/trim 到精确视频时长，并在落盘后用 ffprobe 校验帧数；源视频直接复制路径不变。
+- Long Builder 根因与修复：每个独立 AAC 分段都有自己的 1024-sample encoder priming；直接 concat-copy 会丢失逐段 skip 语义，成片视频约晚 31ms。现在参数一致且有音频时保持 H.264 视频流直拷，只把音频解码后放到连续采样时间轴并重新编码 AAC；无音频且参数一致仍为全流直拷，格式、速度或编码不一致仍完整重编码。
+- 兼容性：节点 id、输入位置、默认值与旧 `join_mode` 序列化字符串均未改变；只更新 tooltip、面板和报告用语。旧 Clip Bin 资产不会被隐式改写，需要重新归档后才获得正确帧数。
+- 自动验证：帧边界与 Builder 专项 Python **80/80 通过**；Builder 前端 **30/30 通过**（16 + 9 + 5）；生产文件编译与 `git diff --check` 通过。完整 Python 共 **213 项：211 通过、1 跳过、1 失败**；唯一失败 `TestCardVideoProbe.test_the_builder_policy_decides_which_variant_is_measured` 在未修改的 `6eb3344` 快照中同样复现，是上游既有的双变体扫描顺序问题，本轮相关生产文件未改。
+- ComfyUI 真实短链路：重启后在隔离项目中跑完「原首尾帧接力基准 → ClipStream 首段 → 自动接续 + Seam Probe → 严格接续 → Long Builder」，**5/5 成功**。ffprobe 实测三段归档为 **22 + 17 + 17 帧**，成片 **56 帧**；四个文件的视频与音频 `start_time` 均为 **0.000000s**。报告：`tasks/2026-10-24-h3-workflow-extensions/outputs/short-tests/20261029_111610_48a2/README.md`。
+- 正式工作流说明已同步，并保持总开关 OFF；连续重建哈希一致，SHA-256 为 `5072e091a10abaa9098f57731b784df0fbc3d8973c71a486eca844dbe40948f6`。
+
 ## 2026-10-27 · `c456e07`（当前功能基线）
 
 - 功能提交 `c456e07 feat: optimize clip media handling and long builder playback` 汇总下方五轮累计改动：Clip Bin 读取与 MP4 存盘性能优化、Long Builder 原速恢复、三区面板与分区顺序、恢复原速时自动匹配输出帧率。共 14 个文件，未改动节点 id，Long Builder 新输入仍只追加在原 schema 末尾。

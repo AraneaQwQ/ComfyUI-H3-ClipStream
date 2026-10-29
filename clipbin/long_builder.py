@@ -386,6 +386,10 @@ def classify_join(samples: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
         if abs(float(sample.get("fps") or 0) - float(base.get("fps") or 0)) > 0.01:
             reasons.append("%s 帧率 %.3f 与首段 %.3f 不同" % (
                 label, float(sample.get("fps") or 0), float(base.get("fps") or 0)))
+        if sample.get("vcodec") and base.get("vcodec") \
+                and sample.get("vcodec") != base.get("vcodec"):
+            reasons.append("%s 视频编码 %s 与首段 %s 不同" % (
+                label, sample.get("vcodec"), base.get("vcodec")))
         if bool(sample.get("has_audio")) != bool(base.get("has_audio")):
             reasons.append("%s 的音轨有无与首段不一致" % label)
         elif sample.get("has_audio") and sample.get("sample_rate") and base.get("sample_rate") \
@@ -454,7 +458,13 @@ def concat_list_text(paths: List[str]) -> str:
 def concat_videos(paths: List[str], output_path: str, mode: str,
                   fps: float = 24.0, has_audio: bool = False,
                   output_speed: float = 1.0) -> Tuple[str, str]:
-    """Runs ffmpeg over the concat list. Returns ("copy"|"reencode", stderr tail)."""
+    """Runs ffmpeg over the concat list and returns the applied join method.
+
+    Independent AAC files each carry their own encoder priming packet. Blindly
+    stream-copying them loses the per-file skip metadata and shifts video by one
+    AAC frame. Compatible video therefore remains stream-copied while audio is
+    decoded once and rebuilt on a continuous sample timeline.
+    """
     ffmpeg_bin = shutil.which("ffmpeg")
     if not ffmpeg_bin:
         raise ValueError("h3_clipstream: 找不到 ffmpeg，无法拼接。请确认 ffmpeg 在 PATH 中（归档卡片视频时也用得到它）。")
@@ -466,8 +476,19 @@ def concat_videos(paths: List[str], output_path: str, mode: str,
 
     try:
         base = [ffmpeg_bin, "-y", "-f", "concat", "-safe", "0", "-i", list_path]
-        if mode == JOIN_COPY:
+        if mode == JOIN_COPY and has_audio:
+            cmd = [ffmpeg_bin, "-y", "-copyts", "-f", "concat", "-safe", "0",
+                   "-i", list_path,
+                   "-map", "0:v:0", "-map", "0:a:0?",
+                   "-c:v", "copy",
+                   "-af", "asetpts=N/SR/TB",
+                   "-c:a", "aac", "-b:a", "192k",
+                   "-avoid_negative_ts", "disabled",
+                   "-movflags", "+faststart", output_path]
+            join_method = "video_copy_audio_reencode"
+        elif mode == JOIN_COPY:
             cmd = base + ["-c", "copy", "-movflags", "+faststart", output_path]
+            join_method = "copy"
         else:
             cmd = base + ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
             if abs(float(output_speed) - 1.0) > 1e-9:
@@ -479,14 +500,17 @@ def concat_videos(paths: List[str], output_path: str, mode: str,
             if has_audio:
                 cmd += ["-c:a", "aac", "-b:a", "192k"]
                 if abs(float(output_speed) - 1.0) > 1e-9:
-                    cmd += ["-filter:a", atempo_filter(output_speed)]
+                    cmd += ["-filter:a", "asetpts=PTS-STARTPTS," + atempo_filter(output_speed)]
+                else:
+                    cmd += ["-filter:a", "asetpts=PTS-STARTPTS"]
             cmd.append(output_path)
+            join_method = "reencode"
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if proc.returncode != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
             tail = (proc.stderr or "").strip().splitlines()[-12:]
             raise ValueError("h3_clipstream: ffmpeg 拼接失败（退出码 %s）：%s"
                              % (proc.returncode, " | ".join(tail) or "ffmpeg 没有输出错误信息"))
-        return ("copy" if mode == JOIN_COPY else "reencode"), (proc.stderr or "")
+        return join_method, (proc.stderr or "")
     finally:
         try:
             os.remove(list_path)
@@ -566,6 +590,8 @@ def build_long_video(project_name: str,
     mode = JOIN_COPY if can_copy else JOIN_REENCODE
     if join_mode == JOIN_REENCODE or source_speed < 1.0:
         mode = JOIN_REENCODE
+    if mode == JOIN_COPY and any(segment.get("has_audio") for segment in segments):
+        warnings.append("视频保持无损直拷；为消除分段 AAC 编码延迟，音频已归一化重编码。")
 
     slug = re.sub(r"[^0-9A-Za-z_-]+", "_", sanitize_project_name(p_name)) or "project"
     name = (output_name or "").strip().strip('"').strip("'")
@@ -585,7 +611,7 @@ def build_long_video(project_name: str,
     source_frames = sum(int(segment.get("frames") or 0) for segment in segments)
     duration = sum(float(segment.get("duration") or 0.0)
                    for segment in segments) / output_speed
-    total_frames = (source_frames if join_method == "copy"
+    total_frames = (source_frames if join_method in ("copy", "video_copy_audio_reencode")
                     else int(round(duration * output_fps)))
     final_probe = probe_video_streams(out_path)
     if final_probe and final_probe.get("frames"):
@@ -629,7 +655,12 @@ def format_report(project_name: str, segments: List[Dict[str, Any]], output_path
             index, segment.get("label") or "?", variant,
             segment.get("width"), segment.get("height"), float(segment.get("fps") or 0),
             int(segment.get("frames") or 0), float(segment.get("duration") or 0), audio))
-    lines.append("拼接方式：%s" % ("无损直拷（未重编码）" if join_method == "copy" else "重编码统一"))
+    join_labels = {
+        "copy": "无损直拷（未重编码）",
+        "video_copy_audio_reencode": "视频无损直拷 + 音频时间轴归一化重编码",
+        "reencode": "音视频重编码统一",
+    }
+    lines.append("拼接方式：%s" % join_labels.get(join_method, join_method))
     if source_speed < 1.0:
         lines.append("原速恢复：切片 %.2fx → 成片 %.4fx（音频 atempo 保音调）"
                      % (source_speed, output_speed))

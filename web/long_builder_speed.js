@@ -41,7 +41,7 @@ export function speedOptionLabel(option) {
 
 export function speedDescription(option, custom = 1.0, baseFps = 24.0) {
     const source = sourcePlaybackSpeed(option, custom);
-    if (source === 1) return "不恢复原速；参数一致时仍可无损直拷。";
+    if (source === 1) return "不恢复原速；参数一致时视频直拷，有音频则归一化重编码音轨。";
     const outputFps = outputFrameRate(baseFps, option, custom);
     return `切片 ${source.toFixed(2)}x → 成片 ${(1 / source).toFixed(3)}x；自动输出 ${outputFps.toFixed(3)}fps，避免恢复时丢帧；音视频同步，需重编码。`;
 }

@@ -94,6 +94,85 @@ class TestMp4Encoding(unittest.TestCase):
         self.assertAlmostEqual(decoded[0].mean() / 255.0, 0.05, delta=0.03)
         self.assertAlmostEqual(decoded[-1].mean() / 255.0, 0.5, delta=0.03)
 
+    def test_video_frame_count_wins_at_the_audio_rounding_boundary(self):
+        """A sub-sample A/V rounding difference must never delete the last frame.
+
+        H3's 22 frames at 24fps span 29333.333 samples at 32kHz.  The real
+        decoded audio is rounded to an integer sample count; ``-shortest`` used
+        to turn the 29333-sample case into a 21-frame MP4.  Bracket that exact
+        boundary so a future ffmpeg-command refactor cannot reintroduce it.
+        """
+        frame_count = 22
+        fps = 24
+        sample_rate = 32000
+        rounded = round(frame_count / fps * sample_rate)
+        frames = torch.linspace(0.05, 0.95, frame_count).view(-1, 1, 1, 1)
+        frames = frames.expand(-1, 16, 32, 3).contiguous()
+
+        for sample_count in (rounded - 1, rounded, rounded + 1):
+            with self.subTest(sample_count=sample_count):
+                output = os.path.join(self.tmpdir, "boundary_%s.mp4" % sample_count)
+                audio = {
+                    "waveform": torch.zeros(1, 1, sample_count),
+                    "sample_rate": sample_rate,
+                }
+                self.assertTrue(cbm.encode_images_to_mp4(
+                    frames, output, fps=fps, audio_dict=audio))
+                with av.open(output) as container:
+                    self.assertEqual(len(container.streams.audio), 1)
+                    decoded = list(container.decode(video=0))
+                self.assertEqual(len(decoded), frame_count)
+
+    def test_silent_video_keeps_every_input_frame(self):
+        frame_count = 22
+        frames = torch.zeros(frame_count, 16, 32, 3, dtype=torch.float32)
+        output = os.path.join(self.tmpdir, "silent.mp4")
+
+        self.assertTrue(cbm.encode_images_to_mp4(frames, output, fps=24))
+        with av.open(output) as container:
+            self.assertEqual(len(container.streams.audio), 0)
+            decoded = list(container.decode(video=0))
+        self.assertEqual(len(decoded), frame_count)
+
+    def test_seventeen_frame_stereo_clip_survives_both_audio_rounding_sides(self):
+        frame_count = 17
+        fps = 24
+        sample_rate = 32000
+        exact_samples = frame_count / fps * sample_rate
+        frames = torch.full((frame_count, 16, 32, 3), 0.4, dtype=torch.float32)
+
+        for sample_count in (int(exact_samples), int(exact_samples) + 1):
+            with self.subTest(sample_count=sample_count):
+                output = os.path.join(self.tmpdir, "stereo17_%s.mp4" % sample_count)
+                audio = {
+                    "waveform": torch.zeros(1, 2, sample_count),
+                    "sample_rate": sample_rate,
+                }
+                self.assertTrue(cbm.encode_images_to_mp4(
+                    frames, output, fps=fps, audio_dict=audio))
+                with av.open(output) as container:
+                    self.assertEqual(len(container.streams.audio), 1)
+                    decoded = list(container.decode(video=0))
+                self.assertEqual(len(decoded), frame_count)
+
+    def test_fractional_frame_rate_keeps_the_authoritative_frame_count(self):
+        frame_count = 22
+        fps = 24000 / 1001
+        sample_rate = 32000
+        sample_count = round(frame_count / fps * sample_rate)
+        frames = torch.full((frame_count, 16, 32, 3), 0.6, dtype=torch.float32)
+        audio = {
+            "waveform": torch.zeros(1, 1, sample_count),
+            "sample_rate": sample_rate,
+        }
+        output = os.path.join(self.tmpdir, "fractional_fps.mp4")
+
+        self.assertTrue(cbm.encode_images_to_mp4(
+            frames, output, fps=fps, audio_dict=audio))
+        with av.open(output) as container:
+            decoded = list(container.decode(video=0))
+        self.assertEqual(len(decoded), frame_count)
+
 
 class TestMp4FailureCleanup(unittest.TestCase):
     def test_nonzero_ffmpeg_exit_is_a_failed_encode(self):

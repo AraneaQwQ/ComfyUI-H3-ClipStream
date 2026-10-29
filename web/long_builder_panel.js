@@ -120,8 +120,8 @@ function parseExcluded(text) {
 const PANEL_MIN_HEIGHT = 680;
 
 const JOIN_OPTION_LABELS = {
-    "auto（参数一致无损直拷，否则重编码）": "auto · 自动",
-    "copy（只允许无损直拷，参数不一致报错）": "copy · 无损直拷",
+    "auto（参数一致无损直拷，否则重编码）": "auto · 视频直拷 / 音频归一",
+    "copy（只允许无损直拷，参数不一致报错）": "copy · 视频直拷 / 音频归一",
     "reencode（统一重编码）": "reencode · 重编码",
 };
 
