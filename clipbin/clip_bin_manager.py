@@ -12,6 +12,7 @@ import json
 import time
 import glob
 import logging
+import math
 import shutil
 import subprocess
 import wave
@@ -567,6 +568,53 @@ def probe_video_duration(video_path: str) -> Optional[float]:
         return None
 
 
+def probe_video_frame_count(video_path: str) -> Optional[int]:
+    """Reads an MP4 frame count via ffprobe when it is available.
+
+    The image batch is authoritative for auto-encoded Clip Bin MP4s. A
+    duration-only probe cannot detect a one-frame truncation hidden by AAC
+    encoder padding, so successful encoding is verified against the input. The
+    muxer's ``nb_frames`` metadata is constant-time; decoding is only a fallback
+    for containers that omit it.
+    """
+    if not video_path or not os.path.isfile(video_path):
+        return None
+    ffprobe_bin = _find_ffprobe()
+    if not ffprobe_bin:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_frames",
+             "-of", "default=noprint_wrappers=1:nokey=0", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        values = {}
+        for line in (proc.stdout or "").splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                values[key.strip()] = value.strip()
+        value = values.get("nb_frames")
+        if value and value not in ("N/A", "0"):
+            return int(value)
+
+        proc = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-count_frames", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_read_frames",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            value = (proc.stdout or "").strip()
+            if value and value not in ("N/A", "0"):
+                return int(value)
+    except Exception as e:
+        logger.debug("[Clip Bin] ffprobe frame-count probe failed for '%s': %s", video_path, e)
+    return None
+
+
 MP4_CHUNK_FRAMES = 8
 
 
@@ -593,6 +641,15 @@ def encode_images_to_mp4(
         return False
 
     N, H, W = images.shape[0], images.shape[1], images.shape[2]
+    try:
+        fps_value = float(fps)
+    except (TypeError, ValueError):
+        fps_value = 0.0
+    if not math.isfinite(fps_value) or fps_value <= 0:
+        logger.warning("[Clip Bin] Invalid fps for video encoding: %r", fps)
+        return False
+    target_duration = N / fps_value
+    target_duration_text = "%.12f" % target_duration
     # ffmpeg requires even dimensions for H.264
     if W % 2 != 0 or H % 2 != 0:
         W = W - (W % 2)
@@ -600,13 +657,14 @@ def encode_images_to_mp4(
         images = images[:, :H, :W, :]
 
     temp_wav_path = None
+    audio_prepared = False
     cmd = [
         ffmpeg_bin, "-y",
         "-f", "rawvideo",
         "-vcodec", "rawvideo",
         "-s", f"{W}x{H}",
         "-pix_fmt", "rgb24",
-        "-r", str(fps),
+        "-r", str(fps_value),
         "-i", "-",
     ]
 
@@ -629,7 +687,8 @@ def encode_images_to_mp4(
                     wav_file.setframerate(sr)
                     wav_file.writeframes(audio_bytes)
 
-                cmd.extend(["-i", temp_wav_path, "-c:a", "aac", "-b:a", "192k", "-shortest"])
+                cmd.extend(["-i", temp_wav_path])
+                audio_prepared = True
         except Exception as e:
             logger.warning("[Clip Bin] Audio preparation failed for video encoding: %s", e)
             if temp_wav_path and os.path.exists(temp_wav_path):
@@ -639,9 +698,22 @@ def encode_images_to_mp4(
                     pass
             temp_wav_path = None
 
+    cmd.extend(["-map", "0:v:0"])
+    if audio_prepared:
+        # H3 audio can end a fraction of one sample before the video boundary.
+        # ffmpeg -shortest then removes the final video frame. Keep the image
+        # batch authoritative and normalize audio to the exact frame timeline.
+        cmd.extend([
+            "-map", "1:a:0",
+            "-af", ("apad=whole_dur=%s,atrim=duration=%s,asetpts=N/SR/TB"
+                    % (target_duration_text, target_duration_text)),
+            "-c:a", "aac", "-b:a", "192k",
+        ])
+
     cmd.extend([
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
+        "-frames:v", str(N),
         "-movflags", "+faststart",
         output_mp4_path
     ])
@@ -658,8 +730,19 @@ def encode_images_to_mp4(
         returncode = proc.wait()
         success = returncode == 0 and os.path.isfile(output_mp4_path) and os.path.getsize(output_mp4_path) > 0
         if success:
+            actual_frames = probe_video_frame_count(output_mp4_path)
+            if actual_frames is not None and actual_frames != N:
+                logger.warning(
+                    "[Clip Bin] Encoded video frame mismatch for '%s': expected %s, got %s",
+                    output_mp4_path, N, actual_frames,
+                )
+                try:
+                    os.remove(output_mp4_path)
+                except OSError:
+                    pass
+                return False
             logger.info("[Clip Bin] Successfully encoded video asset to '%s' (%s frames, %.2fs)",
-                        output_mp4_path, N, N / float(fps))
+                        output_mp4_path, N, target_duration)
         else:
             logger.warning("[Clip Bin] ffmpeg video encoding returned code %s", returncode)
         return success
