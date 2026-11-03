@@ -19,6 +19,7 @@ from .clip_bin_manager import (
     get_project_dir,
     create_project,
     delete_project,
+    rename_project,
     project_locked,
     delete_clip_asset,
     atomic_write_json,
@@ -306,6 +307,31 @@ def _card_has_video(project_dir: str, clip_id: str, entry: Dict[str, Any]) -> bo
     return False
 
 
+def _project_cover_url(project_dir: str, project_name: str, cards: List[Dict[str, Any]]) -> str:
+    """The thumbnail of the first saved card, used as the cover in the project menu.
+
+    The menu shows one picture per project so a bin can be recognised without reading
+    its name. Only the paths the list endpoint already resolves are checked here, and
+    the first card with a preview wins; a bin whose cards were saved before previews
+    existed simply has no cover and the menu draws its icon instead.
+    """
+    base_dir = folder_paths.get_output_directory() if folder_paths is not None else "output"
+    for card in cards:
+        clip_id = str(card.get("clip_id") or "")
+        if not clip_id:
+            continue
+        clip_dir = os.path.join(project_dir, clip_id)
+        for file_name in ("preview.png", "tail_frame.png", "first_frame.png"):
+            path = os.path.join(clip_dir, file_name)
+            if os.path.isfile(path):
+                try:
+                    subfolder = os.path.relpath(clip_dir, base_dir)
+                except Exception:
+                    subfolder = os.path.join("h3-clipstream", project_name, clip_id)
+                return preview_url(path, subfolder)
+    return ""
+
+
 def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
     """Lists project bins with their card and archived-video counts.
 
@@ -313,6 +339,9 @@ def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
     be typed by hand. The Picker wants every bin - an empty one is still a valid
     target to save into - while the Long Builder passes ``videos_only`` because a bin
     with no archived video can never become a film.
+
+    ``updated_at`` and ``cover_url`` are what the card menu draws on each project; the
+    cards themselves live in the index the counts already come from.
     """
     projects = []
     for name in list_projects():
@@ -323,7 +352,13 @@ def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
                      if _card_has_video(project_dir, c.get("clip_id"), c))
         if videos_only and not videos:
             continue
-        projects.append({"name": name, "clips": len(cards), "videos": videos})
+        projects.append({
+            "name": name,
+            "clips": len(cards),
+            "videos": videos,
+            "updated_at": str(index.get("last_updated") or ""),
+            "cover_url": _project_cover_url(project_dir, name, cards),
+        })
     return {"projects": projects}
 
 
@@ -384,6 +419,28 @@ def register_clip_bin_routes() -> None:
         except OSError:
             logger.exception("Failed to create project bin")
             return web.json_response({"error": "建立失败：没有写入权限或文件夹被占用，请关闭预览后重试。"}, status=409)
+        return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+    @routes.post("/minimax/clip_bin/project/rename")
+    async def handle_rename_project(request):
+        blocked = _csrf_block(request)
+        if blocked is not None:
+            return blocked
+        if request.content_type != "application/json":
+            return web.json_response({"error": "Expected JSON"}, status=415)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Expected an object")
+            result = await asyncio.to_thread(
+                rename_project, body.get("project"), body.get("new_name"))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (TypeError, KeyError):
+            return web.json_response({"error": "Invalid project name"}, status=400)
+        except OSError:
+            logger.exception("Failed to rename project bin")
+            return web.json_response({"error": "重命名失败：文件夹可能正被预览占用，请关闭预览后重试。"}, status=409)
         return web.json_response(result, headers={"Cache-Control": "no-store"})
 
     @routes.post("/minimax/clip_bin/project/delete")

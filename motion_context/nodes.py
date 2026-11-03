@@ -667,13 +667,14 @@ class MiniMaxH3MotionContextTrim(io.ComfyNode):
             node_id='MiniMaxH3MotionContextTrimClipStream',
             display_name='H3 Motion Context Trim (ClipStream)',
             category='conditioning/minimax',
-            description='Remove the leading pinned frames from a decoded H3 clip, trimming picture and sound by the same duration.',
+            description='Remove the leading pinned frames from a decoded H3 clip, trimming picture and sound by the same duration. frames_cap optionally drops the tail the generator added beyond the reference clip.',
             inputs=[
                 io.Image.Input('images'),
                 io.Int.Input('trim_frames', default=0, min=0, max=4096),
                 io.Audio.Input('audio', optional=True, tooltip='Decoded audio for the same clip. Trimmed by the matching duration so sound stays locked to picture. Leave unwired for silent clips.'),
                 io.Float.Input('fps', optional=True, default=24.0, min=1.0, max=240.0, step=0.001, tooltip='Frame rate used to convert the trim into an audio duration. Must match what you feed Create Video.'),
                 io.Boolean.Input('match_tail', optional=True, default=True, tooltip='Make the audio duration equal frames/fps exactly, trimming a long tail or padding a short one with silence. H3 rounds its audio grid to the nearest step, so each clip carries about 8ms too much or too little sound, which accumulates at every join in a chain.'),
+                io.Int.Input('frames_cap', optional=True, default=0, min=0, max=4096, tooltip='Optional: keep only the first N frames of the decoded clip before trimming. Wire the reference segment\'s frame_count here so the delivered pictures and sound stop where the reference does. 0 disables it.'),
             ],
             outputs=[
                 io.Image.Output(display_name='images'),
@@ -683,14 +684,18 @@ class MiniMaxH3MotionContextTrim(io.ComfyNode):
 
 
     @classmethod
-    def execute(cls, images, trim_frames, audio=None, fps=24.0, match_tail=True):
+    def execute(cls, images, trim_frames, audio=None, fps=24.0, match_tail=True,
+                frames_cap=0):
         n = max(0, int(trim_frames))
         total = int(images.shape[0])
+        cap = max(0, int(frames_cap or 0))
+        if 0 < cap < total:
+            total = cap
         if n >= total:
             raise ValueError(
                 "h3_motion_context: asked to trim %d frames from a %d frame clip"
                 % (n, total))
-        out_images = images[n:] if n else images
+        out_images = images[n:total]
 
         out_audio = audio
         if audio is not None:

@@ -43,6 +43,9 @@ logger = logging.getLogger("minimax_clip_bin")
 
 _project_locks = {}
 _project_locks_guard = threading.Lock()
+# A rename holds two project locks at once, so it also needs one that no other
+# operation takes: two renames swapping the same pair would deadlock otherwise.
+_rename_lock = threading.Lock()
 
 
 def project_locked(fn):
@@ -113,6 +116,7 @@ class ClipMeta:
 
 BIN_DIR_NAME = "h3-clipstream"
 LEGACY_BIN_DIR_NAME = "minimax_h3_bins"
+INDEX_NAME = ".bin_index.json"
 
 
 def get_base_bin_dir() -> str:
@@ -151,9 +155,14 @@ def sanitize_project_name(project_name: str) -> str:
     return safe_name or "Default_Project"
 
 
+def _project_dir_for(project_name: str) -> str:
+    """The folder a project name maps to, without creating it."""
+    return os.path.join(get_base_bin_dir(), sanitize_project_name(project_name))
+
+
 def get_project_dir(project_name: str) -> str:
     """Returns and ensures the path for a given project bin."""
-    p_dir = os.path.join(get_base_bin_dir(), sanitize_project_name(project_name))
+    p_dir = _project_dir_for(project_name)
     os.makedirs(p_dir, exist_ok=True)
     return p_dir
 
@@ -234,8 +243,54 @@ def delete_project(project_name: str, confirm: str = "") -> Dict[str, Any]:
     return {"name": safe_name, "deleted": True, "clips": cards}
 
 
+def rename_project(project_name: str, new_name: str) -> Dict[str, Any]:
+    """Renames one project bin, moving its folder and rewriting the index name.
+
+    The whole folder moves, so covers, previews and clip bundles keep their relative
+    paths without being touched. An existing name is never overwritten: two stories
+    merged into one folder could not be told apart afterwards. A failed index rewrite
+    moves the folder back, because a folder without a name is worse than a refusal.
+    """
+    old = sanitize_project_name(str(project_name or "").strip())
+    typed = str(new_name or "").strip()
+    if not any(c.isalnum() for c in typed):
+        raise ValueError("h3_clipstream: 项目名称里至少要有一个字母或数字（例如「科幻短片 01」）。")
+    new = sanitize_project_name(typed)
+    if len(new) > MAX_PROJECT_NAME_LENGTH:
+        raise ValueError("h3_clipstream: 项目名称太长，请控制在 %d 个字符以内。" % MAX_PROJECT_NAME_LENGTH)
+    if old == new:
+        return {"old": old, "name": new, "renamed": False}
+
+    with _rename_lock, _project_lock(old), _project_lock(new):
+        base_dir = os.path.realpath(get_base_bin_dir())
+        old_dir = _project_dir_for(old)
+        new_dir = _project_dir_for(new)
+        if os.path.dirname(os.path.realpath(old_dir)) != base_dir:
+            raise ValueError("h3_clipstream: 项目名称无效，只能重命名素材库内的项目文件夹。")
+        if not os.path.isdir(old_dir):
+            raise ValueError("项目「%s」不存在。" % old)
+        if os.path.exists(new_dir):
+            raise ValueError("项目「%s」已存在，请换一个名字。" % new)
+        shutil.move(old_dir, new_dir)
+        try:
+            index_path = os.path.join(new_dir, INDEX_NAME)
+            if os.path.isfile(index_path):
+                with open(index_path, "r", encoding="utf-8") as stream:
+                    index = json.load(stream)
+                index["project_name"] = new
+                index["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                atomic_write_json(index_path, index)
+            else:
+                rebuild_project_index(new)
+        except Exception:
+            shutil.move(new_dir, old_dir)
+            raise
+    logger.info("[Clip Bin] Renamed project bin '%s' -> '%s'", old, new)
+    return {"old": old, "name": new, "renamed": True}
+
+
 def _get_index_path(project_name: str) -> str:
-    return os.path.join(get_project_dir(project_name), ".bin_index.json")
+    return os.path.join(get_project_dir(project_name), INDEX_NAME)
 
 
 @project_locked

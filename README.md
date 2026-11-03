@@ -113,7 +113,7 @@ Long films built by the Long Builder go to `output/h3_long/<project_name>/` and 
 | Node | What it does |
 |------|-------------|
 | **H3 Motion Context** | Pins previous-clip frames as undenoised condition rows at the head of the new clip (audio + video) |
-| **H3 Motion Context Trim** | Cuts the pinned head frames off the decoded output (audio & video synced) |
+| **H3 Motion Context Trim** | Cuts the pinned head frames off the decoded output (audio & video synced). Optional `frames_cap` also drops the tail the generator added beyond the reference clip (view slice, no extra VRAM) |
 | **Save / Load Latent** | B's own cross-run persistence (alternative to Clip Bin) |
 | **Chain** | Sequential execution control (approve / run / re-roll / auto-advance) |
 | **Seam Probe** | In-canvas measurement: verifies the seam is a true continuation, not a "re-imagining" |
@@ -419,7 +419,7 @@ Long Builder 拼出的长片在 `output/h3_long/<项目名>/`，**不属于卡�
 | 节点 | 作用 |
 |------|------|
 | **H3 Motion Context** | 把上一段的关键帧作为"永不降噪的条件行"钉在新片段头部，音画一起接续 |
-| **H3 Motion Context Trim** | 裁掉解码后片段的 pinned 头部，音画同步裁 |
+| **H3 Motion Context Trim** | 裁掉解码后片段的 pinned 头部，音画同步裁。可选 `frames_cap` 再把生成端多出来的尾巴裁回参考片段长度（视图切片，不额外占显存） |
 | **Save / Load Latent** | B 自带的跨段持久化方案（Clip Bin 的替代） |
 | **Chain** | 顺序执行控制（审批/运行/重roll/自动推进） |
 | **Seam Probe** | 画布内接缝测量：验证是真接续还是"模仿" |

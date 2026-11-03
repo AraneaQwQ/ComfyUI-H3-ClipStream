@@ -34,17 +34,33 @@ class BinFixture(unittest.TestCase):
         cbm.get_base_bin_dir = self._real_base
         _support.remove_temp_dir(self.store)
 
-    def add_card(self, project, clip_id, shot, video="video_二采.mp4", declared=True):
+    def add_card(self, project, clip_id, shot, video="video_二采.mp4", declared=True,
+                 preview=False):
         clip_dir = os.path.join(self.store, project, clip_id)
         os.makedirs(clip_dir, exist_ok=True)
         if video:
             with open(os.path.join(clip_dir, video), "wb") as stream:
                 stream.write(b"x")
+        if preview:
+            with open(os.path.join(clip_dir, "preview.png"), "wb") as stream:
+                stream.write(b"png")
         meta = {"clip_id": clip_id, "project_name": project, "shot_tag": shot}
         if declared and video:
             meta["video_file"] = video
         with open(os.path.join(clip_dir, "meta.json"), "w", encoding="utf-8") as stream:
             json.dump(meta, stream, ensure_ascii=False)
+
+    def write_index(self, project, updated, clip_ids):
+        path = os.path.join(self.store, project, ".bin_index.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        index = {
+            "project_name": project,
+            "last_updated": updated,
+            "total_clips": len(clip_ids),
+            "clips": [{"clip_id": c, "project_name": project} for c in clip_ids],
+        }
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump(index, stream, ensure_ascii=False)
 
     def names(self, **kwargs):
         return [p["name"] for p in api.list_projects_api(**kwargs)["projects"]]
@@ -87,9 +103,85 @@ class TestProjectListing(BinFixture):
         self.assertEqual(self.names(videos_only=True), ["Movie"])
 
     def test_an_empty_pool_offers_the_default_bin_but_no_film(self):
-        self.assertEqual(api.list_projects_api()["projects"],
-                         [{"name": "Default_Project", "clips": 0, "videos": 0}])
+        empty = api.list_projects_api()["projects"]
+        self.assertEqual([(p["name"], p["clips"], p["videos"]) for p in empty],
+                         [("Default_Project", 0, 0)])
         self.assertEqual(api.list_projects_api(videos_only=True)["projects"], [])
+
+    def test_the_menu_gets_an_update_time_and_a_cover(self):
+        # The card menu draws a cover and "last changed" on each project, so the
+        # list endpoint has to carry both without asking for every card again.
+        self.add_card("Movie", "clip_a", "Shot 1", preview=True)
+        self.write_index("Movie", "2026-10-28 14:32:18", ["clip_a"])
+        project = api.list_projects_api()["projects"][0]
+        self.assertEqual(project["updated_at"], "2026-10-28 14:32:18")
+        self.assertTrue(project["cover_url"].startswith("/view?"))
+        self.assertIn("preview.png", project["cover_url"])
+
+    def test_a_bin_without_a_preview_still_lists_without_a_cover(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        project = api.list_projects_api()["projects"][0]
+        self.assertEqual(project["cover_url"], "")
+
+
+class TestProjectRenaming(BinFixture):
+    """Renaming a bin moves its folder, so covers and cards follow without a rewrite."""
+
+    def test_renaming_moves_the_folder_and_the_index_name(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        result = cbm.rename_project("Movie", "正片 01")
+        self.assertEqual(result, {"old": "Movie", "name": "正片 01", "renamed": True})
+        self.assertFalse(os.path.exists(os.path.join(self.store, "Movie")))
+        self.assertTrue(os.path.isdir(os.path.join(self.store, "正片 01", "clip_a")))
+        with open(os.path.join(self.store, "正片 01", ".bin_index.json"),
+                  "r", encoding="utf-8") as stream:
+            index = json.load(stream)
+        self.assertEqual(index["project_name"], "正片 01")
+        self.assertEqual(self.names(), ["正片 01"])
+        self.assertEqual(self.counts("正片 01"), (1, 1))
+
+    def test_the_rename_keeps_the_cards_and_the_cover(self):
+        self.add_card("Movie", "clip_a", "Shot 1", preview=True)
+        cbm.rename_project("Movie", "正片 01")
+        project = api.list_projects_api()["projects"][0]
+        self.assertEqual(project["name"], "正片 01")
+        self.assertIn("preview.png", project["cover_url"])
+
+    def test_an_existing_name_is_never_overwritten(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        self.add_card("Other", "clip_b", "Shot 1")
+        with self.assertRaises(ValueError):
+            cbm.rename_project("Movie", "Other")
+        self.assertTrue(os.path.isdir(os.path.join(self.store, "Movie")))
+        self.assertEqual(self.names(), ["Movie", "Other"])
+
+    def test_a_missing_project_is_refused_not_created(self):
+        with self.assertRaises(ValueError):
+            cbm.rename_project("Ghost", "New")
+        self.assertFalse(os.path.exists(os.path.join(self.store, "New")))
+
+    def test_renaming_a_name_to_itself_changes_nothing(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        self.assertEqual(cbm.rename_project("Movie", "Movie"),
+                         {"old": "Movie", "name": "Movie", "renamed": False})
+        self.assertEqual(self.names(), ["Movie"])
+
+    def test_the_new_name_is_the_folder_name_that_was_written(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        result = cbm.rename_project("Movie", "  我的/项目: 第一集  ")
+        self.assertEqual(result["name"], "我的项目 第一集")
+        self.assertTrue(os.path.isdir(os.path.join(self.store, "我的项目 第一集")))
+
+    def test_a_name_without_letters_or_digits_is_refused(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        for typed in ("", "   ", "///"):
+            with self.assertRaises(ValueError):
+                cbm.rename_project("Movie", typed)
+
+    def test_an_overlong_name_is_refused(self):
+        self.add_card("Movie", "clip_a", "Shot 1")
+        with self.assertRaises(ValueError):
+            cbm.rename_project("Movie", "x" * (cbm.MAX_PROJECT_NAME_LENGTH + 1))
 
 
 class TestProjectCreation(BinFixture):
