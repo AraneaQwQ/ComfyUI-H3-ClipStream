@@ -167,6 +167,14 @@ def get_project_dir(project_name: str) -> str:
     return p_dir
 
 
+def existing_project_dir(project_name: Any) -> str:
+    """Return an existing project folder without creating it."""
+    path = _project_dir_for(project_name)
+    if not os.path.isdir(path):
+        raise FileNotFoundError("项目目录不存在，请先保存至少一张卡片。")
+    return path
+
+
 def list_projects() -> List[str]:
     """Lists all available project bin names."""
     base_dir = get_base_bin_dir()

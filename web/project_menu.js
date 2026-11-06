@@ -115,7 +115,12 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
 
     const chevron = makeElement("span", "minimax-project-chevron", "▾");
     currentCard.append(chevron);
-    projectRow.append(projectLabel, currentCard);
+
+    const openDirBtn = makeElement("button", "minimax-project-open", "📂 打开本地目录");
+    openDirBtn.type = "button";
+    openDirBtn.title = "在资源管理器中打开当前项目的素材库文件夹";
+
+    projectRow.append(projectLabel, currentCard, openDirBtn);
     root.appendChild(projectRow);
 
     // Popup: a fixed overlay escapes the DOM widget's overflow clipping, so the grid
@@ -157,37 +162,43 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         option.textContent = `${count} 列`;
         columnsSelect.appendChild(option);
     }
-    const newBtn = makeElement("button", "minimax-clip-bin-refresh-btn", "＋ 新建项目");
+    const newBtn = makeElement("button", "minimax-project-new-btn", "＋ 新建项目");
     newBtn.type = "button";
-    searchRow.append(searchInput, sortSelect, sortDirBtn, columnsSelect, newBtn);
+    newBtn.title = "把光标放进项目名称框";
 
-    const createRow = makeElement("div", "minimax-clip-bin-new");
-    createRow.hidden = true;
+    const createGroup = makeElement("div", "minimax-project-create");
     const nameInput = document.createElement("input");
     nameInput.type = "text";
-    nameInput.className = "minimax-clip-bin-new-input";
+    nameInput.className = "minimax-project-name";
     nameInput.placeholder = config.placeholder;
-    const createBtn = makeElement("button", "minimax-clip-bin-refresh-btn", "✔ 建立");
+    const createBtn = makeElement("button", "minimax-project-create-btn", "✔ 建立");
     createBtn.type = "button";
-    const cancelCreateBtn = makeElement("button", "minimax-clip-bin-refresh-btn", "✕ 取消");
+    const cancelCreateBtn = makeElement("button", "minimax-project-cancel-btn", "✕ 取消");
     cancelCreateBtn.type = "button";
-    const createError = makeElement("span", "minimax-clip-bin-new-error");
-    createRow.append(nameInput, createBtn, cancelCreateBtn, createError);
+    const createError = makeElement("span", "minimax-project-error");
+    createGroup.append(nameInput, createBtn, cancelCreateBtn, createError);
 
-    const deleteRow = makeElement("div", "minimax-clip-bin-new minimax-clip-bin-danger");
+    searchRow.append(newBtn, createGroup, searchInput, sortSelect, sortDirBtn, columnsSelect);
+
+    const deleteRow = makeElement("div", "minimax-project-confirm");
     deleteRow.hidden = true;
-    const deleteText = makeElement("span", "minimax-clip-bin-danger-text");
+    const confirmCard = makeElement("div", "minimax-project-confirm-card");
+    const confirmTitle = makeElement("span", "minimax-project-confirm-title");
+    const deleteText = makeElement("span", "minimax-project-confirm-text");
     const deleteBtn = makeElement("button", "minimax-clip-bin-danger-btn");
     deleteBtn.type = "button";
     const cancelDeleteBtn = makeElement("button", "minimax-clip-bin-refresh-btn", "✕ 取消");
     cancelDeleteBtn.type = "button";
     const deleteError = makeElement("span", "minimax-clip-bin-new-error");
-    deleteRow.append(deleteText, deleteBtn, cancelDeleteBtn, deleteError);
+    const confirmActions = makeElement("div", "minimax-project-confirm-actions");
+    confirmActions.append(cancelDeleteBtn, deleteBtn);
+    confirmCard.append(confirmTitle, deleteText, confirmActions, deleteError);
+    deleteRow.appendChild(confirmCard);
 
     const grid = makeElement("div", "minimax-project-grid");
     const modalHint = makeElement("span", "minimax-project-modal-hint");
     modalHint.textContent = "点卡片切换项目 · ✎ 重命名会移动整个文件夹 · 🗑 删除会清空整个库。";
-    modal.append(head, searchRow, createRow, deleteRow, grid, modalHint);
+    modal.append(head, searchRow, grid, modalHint, deleteRow);
     overlay.appendChild(modal);
 
     document.body.appendChild(overlay);
@@ -432,10 +443,22 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         }
     }
 
-    function closeCreateRow() {
-        createRow.hidden = true;
+    function resetCreateInput() {
         nameInput.value = "";
-        createError.textContent = "";
+        showCreateError("");
+        syncCreateButtons();
+        nameInput.blur();
+    }
+
+    function syncCreateButtons() {
+        const ready = nameInput.value.trim().length > 0;
+        createBtn.disabled = !ready;
+        cancelCreateBtn.disabled = !ready;
+    }
+
+    function showCreateError(message) {
+        createError.textContent = message;
+        createError.title = message;
     }
 
     function closeDeleteRow() {
@@ -450,7 +473,7 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         modalOpen = true;
         overlay.hidden = false;
         searchInput.value = search;
-        closeCreateRow();
+        resetCreateInput();
         closeDeleteRow();
         editingName = "";
         renderGrid();
@@ -462,7 +485,7 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         overlay.hidden = true;
         editingName = "";
         pendingDelete = "";
-        closeCreateRow();
+        resetCreateInput();
         closeDeleteRow();
         if (openMenuClose === closeModal) openMenuClose = null;
     }
@@ -471,6 +494,44 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         event.preventDefault();
         event.stopPropagation();
         openModal();
+    };
+
+    const OPEN_DIR_LABEL = "📂 打开本地目录";
+    const OPEN_DIR_TITLE = "在资源管理器中打开当前项目的素材库文件夹";
+    let openDirTimer = 0;
+    function flashOpenDir(text, tip) {
+        openDirBtn.textContent = text;
+        openDirBtn.title = tip;
+        window.clearTimeout(openDirTimer);
+        openDirTimer = window.setTimeout(() => {
+            openDirBtn.textContent = OPEN_DIR_LABEL;
+            openDirBtn.title = OPEN_DIR_TITLE;
+        }, 2600);
+    }
+
+    openDirBtn.onclick = async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const project = currentName();
+        openDirBtn.disabled = true;
+        try {
+            const res = await api.fetchApi("/minimax/clip_bin/project/open", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ project }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                flashOpenDir("⚠ 打不开目录", data.error || `打开失败（HTTP ${res.status}）`);
+                return;
+            }
+            flashOpenDir("📂 已打开", `已在资源管理器中打开「${project}」`);
+        } catch (error) {
+            console.warn("[Clip Bin] open project folder failed:", error);
+            flashOpenDir("⚠ 打不开目录", "打开失败：连不上后台服务。");
+        } finally {
+            openDirBtn.disabled = false;
+        }
     };
 
     closeBtn.onclick = (event) => {
@@ -482,10 +543,13 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         if (event.target === overlay) closeModal();
     };
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && modalOpen) {
-            event.stopPropagation();
-            closeModal();
+        if (event.key !== "Escape" || !modalOpen) return;
+        event.stopPropagation();
+        if (!deleteRow.hidden) {
+            closeDeleteRow();
+            return;
         }
+        closeModal();
     }, { signal });
 
     searchInput.oninput = () => {
@@ -518,30 +582,38 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
         event.preventDefault();
         event.stopPropagation();
         closeDeleteRow();
-        createRow.hidden = !createRow.hidden;
-        if (!createRow.hidden) nameInput.focus();
+        nameInput.focus();
+        nameInput.select();
     };
     cancelCreateBtn.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        closeCreateRow();
+        resetCreateInput();
     };
+    createBtn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void createProject();
+    };
+    nameInput.oninput = syncCreateButtons;
     nameInput.onkeydown = (event) => {
         event.stopPropagation();
         if (event.key === "Enter") {
             event.preventDefault();
             void createProject();
         }
-        if (event.key === "Escape") closeCreateRow();
+        if (event.key === "Escape") resetCreateInput();
     };
 
     function showDeleteConfirm(bin) {
         pendingDelete = bin.name;
-        closeCreateRow();
+        resetCreateInput();
+        confirmTitle.textContent = `删除项目「${bin.name}」`;
         deleteText.textContent = deleteWarning(bin.name, bin);
         deleteBtn.textContent = `✔ 删除「${bin.name}」`;
         deleteError.textContent = "";
         deleteRow.hidden = false;
+        cancelDeleteBtn.focus();
     }
 
     cancelDeleteBtn.onclick = (event) => {
@@ -582,7 +654,7 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
     }
 
     async function setProject(name, closeAfter = false) {
-        closeCreateRow();
+        resetCreateInput();
         closeDeleteRow();
         editingName = "";
         if (widget) {
@@ -606,12 +678,13 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
     async function createProject() {
         const typed = nameInput.value.trim();
         if (!typed) {
-            createError.textContent = "先写个名字。";
+            showCreateError("先写个名字。");
             nameInput.focus();
             return;
         }
         createBtn.disabled = true;
-        createError.textContent = "";
+        cancelCreateBtn.disabled = true;
+        showCreateError("");
         try {
             const res = await api.fetchApi("/minimax/clip_bin/project", {
                 method: "POST",
@@ -620,15 +693,15 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                createError.textContent = data.error || `建立失败（HTTP ${res.status}）`;
+                showCreateError(data.error || `建立失败（HTTP ${res.status}）`);
                 return;
             }
             await setProject(data.name || typed, true);
         } catch (error) {
             console.warn("[Clip Bin] create project failed:", error);
-            createError.textContent = "建立失败：连不上后台服务。";
+            showCreateError("建立失败：连不上后台服务。");
         } finally {
-            createBtn.disabled = false;
+            syncCreateButtons();
         }
     }
 
@@ -705,12 +778,14 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
     }
 
     signal.addEventListener("abort", () => {
+        window.clearTimeout(openDirTimer);
         overlay.remove();
         if (openMenuClose === closeModal) openMenuClose = null;
     }, { once: true });
 
     syncSortUi();
     applyColumns();
+    syncCreateButtons();
     paintCurrent();
     void refresh();
 

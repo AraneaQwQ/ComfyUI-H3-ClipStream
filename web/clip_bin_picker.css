@@ -30,13 +30,13 @@
 .minimax-clip-bin-mode-btn {
     flex: 1 1 140px;
     min-width: 120px;
-    min-height: 34px;
-    padding: 7px 10px;
+    min-height: 36px;
+    padding: 0 12px;
     border: 1px solid #475569;
     border-radius: 6px;
     background: #16202e;
     color: #94a3b8;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
@@ -73,23 +73,25 @@
 .minimax-clip-bin-mode-hint {
     flex: 1 1 100%;
     color: #94a3b8;
-    font-size: 10px;
+    font-size: 11.5px;
     line-height: 1.4;
     overflow-wrap: anywhere;
 }
 
-/* Header bar */
 .minimax-clip-bin-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid #3a3a3a;
-    padding-bottom: 6px;
+    gap: 8px;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    background: #16202e;
+    padding: 7px 9px;
     margin-bottom: 8px;
 }
 
 .minimax-clip-bin-title {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     color: #93c5fd;
     display: flex;
@@ -102,51 +104,10 @@
 /* Project menu: choose the bin from the folders that exist, or start a new one.
    Shared with the Long Builder panel, which loads this stylesheet too. */
 
-/* Name entry for a new bin; only visible while the menu is on "＋ 新建项目…". */
-.minimax-clip-bin-new {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-}
-
-.minimax-clip-bin-new[hidden] {
-    display: none;
-}
-
-.minimax-clip-bin-new-input {
-    flex: 1 1 auto;
-    min-width: 0;
-    background: #0f172a;
-    border: 1px solid #475569;
-    color: #e2e8f0;
-    border-radius: 4px;
-    font-size: 11px;
-    padding: 3px 6px;
-}
-
-.minimax-clip-bin-new-input:focus {
-    outline: none;
-    border-color: #60a5fa;
-}
-
 .minimax-clip-bin-new-error {
     font-size: 10px;
     color: #fca5a5;
     white-space: nowrap;
-}
-
-/* Confirm step for deleting a whole bin; the sentence names what is at stake. */
-.minimax-clip-bin-danger {
-    flex-wrap: wrap;
-    row-gap: 4px;
-}
-
-.minimax-clip-bin-danger-text {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: 10px;
-    color: #fca5a5;
 }
 
 .minimax-clip-bin-danger-btn {
@@ -187,6 +148,19 @@
     transition: all 0.2s ease;
 }
 
+.minimax-clip-bin-header .minimax-clip-bin-refresh-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
 .minimax-clip-bin-refresh-btn:hover {
     background: #334155;
     color: #ffffff;
@@ -195,10 +169,10 @@
 }
 
 .minimax-clip-bin-zoom-label {
-    font-size: 10px;
-    color: #94a3b8;
+    font-size: 12px;
+    color: #cbd5e1;
     font-family: monospace;
-    min-width: 32px;
+    min-width: 44px;
     text-align: center;
 }
 
@@ -323,7 +297,7 @@
 
 /* Shot Tag Name */
 .minimax-clip-shot-name {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: #f1f5f9;
     white-space: nowrap;
@@ -786,6 +760,37 @@
     white-space: nowrap;
 }
 
+.minimax-project-open {
+    flex: 0 0 auto;
+    height: clamp(28px, 1.8vw, 34px);
+    padding: 0 clamp(8px, .7vw, 12px);
+    color: #cbd5e1;
+    background: #20252d;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    font-size: clamp(11px, .5vw, 14px);
+    font-family: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease, color .2s ease;
+}
+
+.minimax-project-open:hover {
+    color: #fff;
+    background: #263244;
+    border-color: #60a5fa;
+}
+
+.minimax-project-open:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.minimax-project-open:disabled {
+    opacity: .55;
+    cursor: default;
+}
+
 .minimax-project-count {
     color: #94a3b8;
     font-size: clamp(9px, 0.35vw, 11px);
@@ -903,6 +908,7 @@
 }
 
 .minimax-project-modal {
+    position: relative;
     width: min(68vw, 1425px);
     max-height: min(78vh, 1000px);
     display: flex;
@@ -959,6 +965,7 @@
 }
 
 .minimax-project-search-row {
+    --project-control-h: clamp(30px, 2vw, 40px);
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -967,39 +974,149 @@
     padding: clamp(8px, .6vw, 13px) clamp(10px, .8vw, 16px) 5px;
 }
 
-.minimax-project-search {
-    flex: 1 1 160px;
-    min-width: 0;
-    padding: 4px 7px;
+.minimax-project-search-row > *,
+.minimax-project-create > * {
+    box-sizing: border-box;
+}
+
+.minimax-project-new-btn {
+    flex: 0 0 auto;
+    height: var(--project-control-h);
+    padding: 0 clamp(12px, 1vw, 18px);
+    color: #ffffff;
+    background: #1d4ed8;
+    border: 1px solid #3b82f6;
+    border-radius: 6px;
+    font-size: clamp(14px, .8vw, 17px);
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease;
+}
+
+.minimax-project-new-btn:hover {
+    background: #2563eb;
+    border-color: #93c5fd;
+}
+
+.minimax-project-new-btn:focus-visible {
+    outline: 2px solid #93c5fd;
+    outline-offset: 2px;
+}
+
+.minimax-project-create {
+    display: contents;
+}
+
+.minimax-project-name {
+    flex: 1 1 0;
+    min-width: clamp(150px, 10vw, 200px);
+    height: calc(var(--project-control-h) * .95);
+    padding: 0 8px;
     color: #e2e8f0;
     background: #0f172a;
     border: 1px solid #475569;
     border-radius: 5px;
-    font-size: clamp(11px, .7vw, 14px);
+    font-size: clamp(13px, .72vw, 16px);
+    user-select: text;
+}
+
+.minimax-project-name:focus {
+    outline: none;
+    border-color: #60a5fa;
+}
+
+.minimax-project-create-btn,
+.minimax-project-cancel-btn {
+    flex: 0 0 auto;
+    height: calc(var(--project-control-h) * .95);
+    padding: 0 clamp(10px, .8vw, 14px);
+    border-radius: 5px;
+    font-size: clamp(13px, .72vw, 16px);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease;
+}
+
+.minimax-project-create-btn {
+    color: #ffffff;
+    background: #15803d;
+    border: 1px solid #22c55e;
+}
+
+.minimax-project-create-btn:hover {
+    background: #16a34a;
+    border-color: #4ade80;
+}
+
+.minimax-project-create-btn:disabled,
+.minimax-project-cancel-btn:disabled {
+    color: #64748b;
+    background: #1e293b;
+    border-color: #334155;
+    opacity: .75;
+    cursor: default;
+}
+
+.minimax-project-cancel-btn {
+    color: #cbd5e1;
+    background: #1e293b;
+    border: 1px solid #475569;
+}
+
+.minimax-project-cancel-btn:hover {
+    color: #ffffff;
+    background: #334155;
+    border-color: #60a5fa;
+}
+
+.minimax-project-error {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: clamp(120px, 12vw, 220px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #fca5a5;
+    font-size: clamp(11px, .62vw, 13px);
+}
+
+.minimax-project-search {
+    flex: 1 1 0;
+    min-width: clamp(150px, 10vw, 200px);
+    height: calc(var(--project-control-h) * .95);
+    padding: 0 8px;
+    color: #e2e8f0;
+    background: #0f172a;
+    border: 1px solid #475569;
+    border-radius: 5px;
+    font-size: clamp(13px, .72vw, 16px);
     user-select: text;
 }
 
 .minimax-project-sort,
 .minimax-project-columns {
     flex: 0 0 auto;
-    min-width: 96px;
-    padding: 3px 5px;
+    min-width: clamp(96px, 8vw, 118px);
+    height: calc(var(--project-control-h) * .95);
+    padding: 0 6px;
     color: #e2e8f0;
     background: #0f172a;
     border: 1px solid #475569;
     border-radius: 5px;
-    font-size: clamp(10px, .62vw, 13px);
+    font-size: clamp(12px, .68vw, 15px);
     cursor: pointer;
 }
 
 .minimax-project-columns {
-    min-width: 62px;
+    min-width: clamp(64px, 5vw, 78px);
 }
 
 .minimax-project-sort-dir {
     flex: 0 0 auto;
-    width: clamp(24px, 1.4vw, 32px);
-    height: clamp(24px, 1.4vw, 32px);
+    width: var(--project-control-h);
+    height: var(--project-control-h);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1009,12 +1126,11 @@
     border: 1px solid #475569;
     border-radius: 5px;
     cursor: pointer;
-    font-size: clamp(11px, .7vw, 14px);
+    font-size: clamp(13px, .72vw, 16px);
 }
 
 .minimax-project-search:focus,
-.minimax-project-rename-input:focus,
-.minimax-project-modal .minimax-clip-bin-new-input:focus {
+.minimax-project-rename-input:focus {
     outline: none;
     border-color: #60a5fa;
 }
@@ -1157,15 +1273,69 @@
     font-size: 12px;
 }
 
-.minimax-project-modal .minimax-clip-bin-new {
-    margin: 0 clamp(12px, 1vw, 20px) 8px;
-    padding: 2px 0;
-}
-
 .minimax-project-modal-hint {
     flex: 0 0 auto;
     padding: 7px 12px 9px;
     color: #64748b;
     border-top: 1px solid #263244;
     font-size: 10px;
+}
+
+.minimax-project-confirm {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(10, 16, 27, .78);
+}
+
+.minimax-project-confirm[hidden] {
+    display: none;
+}
+
+.minimax-project-confirm-card {
+    width: min(560px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: clamp(14px, 1vw, 20px);
+    background: #1d2532;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+}
+
+.minimax-project-confirm-title {
+    color: #fecaca;
+    font-size: clamp(13px, .85vw, 16px);
+    font-weight: 700;
+}
+
+.minimax-project-confirm-text {
+    color: #cbd5e1;
+    font-size: clamp(11px, .72vw, 14px);
+    line-height: 1.5;
+}
+
+.minimax-project-confirm-card .minimax-clip-bin-new-error {
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.minimax-project-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.minimax-project-confirm-actions .minimax-clip-bin-danger-btn,
+.minimax-project-confirm-actions .minimax-clip-bin-refresh-btn {
+    height: 30px;
+    padding: 0 14px;
+    font-size: 13px;
+    border-radius: 6px;
 }

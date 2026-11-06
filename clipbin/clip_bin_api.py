@@ -17,6 +17,7 @@ except ImportError:
 
 from .clip_bin_manager import (
     get_project_dir,
+    existing_project_dir,
     create_project,
     delete_project,
     rename_project,
@@ -39,6 +40,8 @@ from .long_builder import (
     pick_variant,
     probe_video_streams,
 )
+
+from .local_folder import open_local_folder
 
 
 def _probe_and_fix_durations(project_name: str, clip_id: str, entry: Dict[str, Any], clip_dir: str) -> bool:
@@ -465,6 +468,33 @@ def register_clip_bin_routes() -> None:
         if not result["deleted"]:
             return web.json_response({"error": "项目已不存在，请刷新列表。"}, status=404)
         return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+    @routes.post("/minimax/clip_bin/project/open")
+    async def handle_open_project(request):
+        """Open one existing project folder on the ComfyUI host."""
+        blocked = _csrf_block(request)
+        if blocked is not None:
+            return blocked
+        if request.content_type != "application/json":
+            return web.json_response({"error": "Expected JSON"}, status=415)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Expected an object")
+            folder = await asyncio.to_thread(existing_project_dir, body.get("project"))
+            await asyncio.to_thread(open_local_folder, folder)
+        except FileNotFoundError as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (TypeError, KeyError):
+            return web.json_response({"error": "Invalid project name"}, status=400)
+        except RuntimeError as exc:
+            return web.json_response({"error": str(exc)}, status=501)
+        except OSError:
+            logger.exception("Failed to open project bin folder")
+            return web.json_response({"error": "打开目录失败：没有权限或资源管理器没有响应。"}, status=409)
+        return web.json_response({"opened": True}, headers={"Cache-Control": "no-store"})
 
     @routes.post("/minimax/clip_bin/delete")
     async def handle_delete(request):

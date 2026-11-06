@@ -92,9 +92,19 @@
     white-space: nowrap;
 }
 
+.h3-lb-card-toolbar {
+    padding: 7px 9px;
+    gap: 8px;
+    min-height: 0;
+    margin-bottom: 8px;
+    background: #16202e;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
 .h3-lb-tool-label {
     color: #94a3b8;
-    font-size: 10px;
+    font-size: 12px;
     white-space: nowrap;
 }
 
@@ -102,6 +112,19 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     margin-left: auto;
+}
+
+.h3-lb-card-toolbar .minimax-clip-bin-refresh-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 .h3-lb-settings-grid {
@@ -205,7 +228,7 @@
 
 .h3-lb-container .h3-lb-summary {
     flex: 0 0 auto;
-    max-height: 42px;
+    max-height: 64px;
     overflow-y: auto;
     box-sizing: border-box;
 }
@@ -217,13 +240,13 @@
 
 /* What will actually be joined, in plain words. */
 .h3-lb-summary {
-    font-size: 11px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1.55;
     color: #cbd5e1;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 4px;
-    padding: 4px 6px;
+    background: #101a27;
+    border: 1px solid #263244;
+    border-radius: 6px;
+    padding: 8px 10px;
     margin-bottom: 8px;
 }
 
@@ -411,9 +434,9 @@
 .h3-lb-order-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     margin-bottom: 6px;
-    font-size: 10px;
+    font-size: 11.5px;
     color: #94a3b8;
 }
 
@@ -423,12 +446,16 @@
 
 .h3-lb-order-reset {
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 26px;
+    padding: 0 10px;
     background: #1e293b;
     color: #cbd5e1;
     border: 1px solid #334155;
-    border-radius: 3px;
-    font-size: 10px;
-    padding: 2px 6px;
+    border-radius: 5px;
+    font-size: 12px;
     cursor: pointer;
 }
 
