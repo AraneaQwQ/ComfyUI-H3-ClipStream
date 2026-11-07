@@ -11,7 +11,7 @@
 //   moves the node - only the fit button and the zoom buttons change its height
 // - the finished film on the node, which can be put away while the cards are arranged
 import { addPanel } from "./dom_panel.js";
-import { moveCard, resolveDeckOrder, shotNumber } from "./long_builder_order.js";
+import { moveCard, pruneMissingExclusions, resolveDeckOrder, shotNumber } from "./long_builder_order.js";
 import { createProjectMenu } from "./project_menu.js";
 import {
     DECK_PAD_V,
@@ -592,6 +592,16 @@ function setupLongBuilderPanel(node) {
     const excluded = () => new Set(parseExcluded(excludeWidget?.value));
     const orderText = () => String(orderWidget?.value || "");
 
+    function pruneExclusions(cards) {
+        if (!excludeWidget) return;
+        const original = String(excludeWidget.value || "");
+        const cleaned = pruneMissingExclusions(original, cards);
+        if (cleaned === original) return;
+        excludeWidget.value = cleaned;
+        excludeWidget.callback?.(cleaned);
+        node.setDirtyCanvas?.(true, true);
+    }
+
     function setExcluded(clipId, off) {
         const list = parseExcluded(excludeWidget?.value);
         const at = list.indexOf(clipId);
@@ -709,6 +719,7 @@ function setupLongBuilderPanel(node) {
             }
             const data = await res.json();
             const cards = data.clips || [];
+            pruneExclusions(cards);
             cardCount = cards.length;
             const offSet = excluded();
             const ordered = resolveDeckOrder(cards, orderText(), offSet);

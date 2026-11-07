@@ -6,7 +6,7 @@
 // another is the one failure this feature has to avoid.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { moveCard, resolveDeckOrder } from "../../web/long_builder_order.js";
+import { moveCard, pruneMissingExclusions, resolveDeckOrder } from "../../web/long_builder_order.js";
 
 const none = new Set();
 const card = (clipId, shot, extra = {}) => ({ clip_id: clipId, shot_tag: shot, has_video: true, ...extra });
@@ -38,6 +38,20 @@ test("a reference whose card was deleted is ignored", () => {
     const cards = [card("clip_c1", "Shot 1"), card("clip_c2", "Shot 2")];
     assert.deepEqual(resolveDeckOrder(cards, "clip_gone,clip_c2", none).joinIds,
         ["clip_c2", "clip_c1"]);
+});
+
+test("stale exclusions are removed without losing valid ids or their order", () => {
+    const cards = [card("clip_c1", "Shot 1"), card("clip_c2", "Shot 2")];
+    const stale = Array.from({ length: 20 }, (_, index) => `clip_deleted_${index}`);
+    const input = [...stale.slice(0, 10), "clip_c2", ...stale.slice(10), "clip_c1"].join(",");
+    assert.equal(pruneMissingExclusions(input, cards), "clip_c2,clip_c1");
+});
+
+test("exclusion cleanup preserves valid shot tags and untouched text", () => {
+    const cards = [card("clip_c1", "Shot 1"), card("clip_c2", "Shot 2")];
+    assert.equal(pruneMissingExclusions("Shot 2; clip_gone\nShot 1", cards), "Shot 2,Shot 1");
+    assert.equal(pruneMissingExclusions("Shot 2; clip_c1", cards), "Shot 2; clip_c1");
+    assert.equal(pruneMissingExclusions("clip_gone", cards), "");
 });
 
 test("cards that cannot join stay out of the order and at the end of the deck", () => {

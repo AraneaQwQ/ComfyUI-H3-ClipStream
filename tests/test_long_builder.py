@@ -87,10 +87,18 @@ class TestShotOrder(unittest.TestCase):
         order, _ = lb.resolve_shot_order(self.cards, exclude_text="Shot 1")
         self.assertEqual(order, ["clip_c2", "clip_c3"])
 
-    def test_excluding_a_card_that_is_not_in_the_bin_is_reported_not_fatal(self):
+    def test_excluding_a_card_that_is_not_in_the_bin_is_silently_ignored(self):
         order, warnings = lb.resolve_shot_order(self.cards, exclude_text="clip_gone")
         self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
-        self.assertIn("clip_gone", warnings[0])
+        self.assertEqual(warnings, [])
+
+    def test_stale_exclusions_do_not_change_valid_exclusions_or_order(self):
+        stale = ["clip_deleted_%d" % number for number in range(30)]
+        exclude_text = ",".join(stale[:15] + ["clip_c2"] + stale[15:])
+        order, warnings = lb.resolve_shot_order(self.cards, exclude_text=exclude_text,
+                                                clip_order="clip_c3,clip_c1,clip_c2")
+        self.assertEqual(order, ["clip_c3", "clip_c1"])
+        self.assertEqual(warnings, [])
 
     def test_unnumbered_tags_follow_the_numbered_ones_in_generation_order(self):
         self.cards.append(card("clip_x", "补拍空镜", created_at="2026-10-02 09:00:00"))

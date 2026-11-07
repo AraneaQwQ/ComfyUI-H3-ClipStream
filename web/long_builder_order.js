@@ -46,6 +46,16 @@ function findCard(cards, reference) {
         || null;
 }
 
+// Deleted cards must not remain in the hidden exclusion widget forever. Keep valid
+// references in their original form and order; only rewrite the widget when something
+// stale was actually removed.
+export function pruneMissingExclusions(text, cards) {
+    const original = String(text || "");
+    const references = parseOrder(original);
+    const retained = references.filter(reference => findCard(cards, reference));
+    return retained.length === references.length ? original : retained.join(",");
+}
+
 // Returns { deck, joinIds }: the cards to render, and the clip_ids that will be joined
 // in that order. Cards that cannot join (switched off, no archived video) come last and
 // never appear in joinIds, so the widget only ever holds real segments.
