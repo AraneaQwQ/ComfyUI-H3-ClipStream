@@ -25,6 +25,7 @@ CONTEXT_CATEGORY = "conditioning/minimax"
 # The three upstream 0.7.1 experiment nodes keep the upstream categories, so a
 # graph built against the standalone package lands in the same menus here.
 EXPERIMENT_CATEGORIES = {
+    "MiniMaxH3OverlapRestoreClipStream": "latent/minimax",
     "MiniMaxH3RefineBlendClipStream": "latent/minimax",
     "MiniMaxH3JoinMatchClipStream": "latent/minimax",
     "MiniMaxH3SigmasTailClipStream": "sampling/custom_sampling/sigmas",
@@ -35,9 +36,10 @@ EXPERIMENT_CATEGORIES = {
 MODULES = ("clipbin.nodes", "clipbin.dual_nodes", "clipbin.long_nodes",
            "motion_context.nodes", "motion_context.probe_node",
            "motion_context.refine_blend", "motion_context.join_match",
-           "motion_context.sigma_tools")
+           "motion_context.sigma_tools", "motion_context.overlap_restore")
 
 EXPECTED_OUTPUTS = {
+    "MiniMaxH3OverlapRestoreClipStream": ["latent"],
     "MiniMaxClipBinSaver": ["clip_id", "preview_image", "bin_path"],
     "MiniMaxClipBinPicker": ["latent", "tail_frame", "first_frame", "prompt", "clip_id", "project_name"],
     "MiniMaxClipBinDualSaver": ["clip_id", "preview_image", "project_name"],
@@ -57,6 +59,8 @@ EXPECTED_OUTPUTS = {
 # (input id, is_optional) in declaration order. Renaming or reordering one
 # breaks graphs that are already saved on disk.
 EXPECTED_INPUTS = {
+    "MiniMaxH3OverlapRestoreClipStream": [("samples", False), ("trim_frames", False),
+                                       ("enabled", False), ("context_latent", True)],
     "MiniMaxClipBinSaver": [("latent", False), ("project_name", False), ("shot_tag", False),
                             ("images", True), ("audio", True), ("prompt", True),
                             ("parent_clip_id", True), ("video_file_name", True), ("save_video", True)],

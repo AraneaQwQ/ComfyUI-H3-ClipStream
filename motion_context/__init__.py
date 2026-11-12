@@ -12,6 +12,7 @@ from .probe_node import NODE_LIST as PROBE_NODES
 from .refine_blend import NODE_LIST as REFINE_NODES
 from .join_match import NODE_LIST as JOIN_NODES
 from .sigma_tools import NODE_LIST as SIGMA_NODES
+from .overlap_restore import NODE_LIST as RESTORE_NODES
 
 NODE_LIST = [*CONTEXT_NODES, *PROBE_NODES, *REFINE_NODES, *JOIN_NODES,
-             *SIGMA_NODES]
+             *SIGMA_NODES, *RESTORE_NODES]

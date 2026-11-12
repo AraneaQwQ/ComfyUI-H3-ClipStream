@@ -3,6 +3,17 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
+## 2026-11-12 · 二采后原始重叠 token 恢复节点
+
+- 基线：当前运行副本干净提交 `6d9b18d`；旧 `projects` 副本仍为 `6eb3344`，本次未用旧副本覆盖当前功能。开发副本在 `C:\Users\az\Documents\ChatGPT\插件维护\ComfyUI-H3-ClipStream`。
+- 修改前完整 Git 快照：`archive/2026-11-12-6d9b18d-pre-overlap-restore/clipstream-6d9b18d.zip`。
+- 新增 `MiniMaxH3OverlapRestoreClipStream`，显示名 `H3 Overlap Restore / 原始重叠恢复 (ClipStream)`，分类 `latent/minimax`。放在二采最终采样之后、解码和 latent 保存之前。
+- `samples` 接当前二采，`context_latent` 接上一段原始二采（若加噪则从加噪前取），`trim_frames` 强制连到对应 Motion Context 输出。首段 0 与关闭时透传，5/22/39/56 帧分别复制 2/7/12/17 步。没有加入颜色补偿或融合。
+- 只克隆并改动当前视频重叠区。保留新内容、音频及其他流的对象、latent 元数据和容器类型。检查批次、24 通道、分辨率、精度、长度及父段尾部周期；非法输入报错。
+- 自动验证：完整 Python `unittest discover -s tests` 共 236 项，235 通过、1 项既有 Windows 目录链接权限跳过；新增专项 12 项全部通过。覆盖精确复制、不修改输入、未来 token 不变、音频与元数据保留、首段/关闭、四种容器和输入错误；节点 schema 注册测试通过。
+- 真实数据：读取既有「呆猫鱼鱼」项目六组二采接续 latent，均验证前 7 步与父段尾 7 步完全相同、第 7 步之后与输入完全相同、输入视频及音频未改动；覆盖 47/67/72 步三种片长，均为 float32。未重新采样或解码，未修改素材库。
+- 部署状态：尚未覆盖 ComfyUI 运行副本，未自动重启或修改用户工作流。
+
 ## 2026-11-07 · Long Builder 失效排除引用清理（待用户实机验收）
 
 - 快照：`archive/2026-11-07-f40099a-pre-stale-excludes/clipstream-f40099a.zip` 保存本轮前 `f40099a` 完整 Git 基线。
