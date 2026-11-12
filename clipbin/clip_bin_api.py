@@ -339,10 +339,8 @@ def _project_cover_url(project_dir: str, project_name: str, cards: List[Dict[str
 def list_projects_api(videos_only: bool = False, asset_kind: str = "") -> Dict[str, Any]:
     """Lists project bins with their card and archived-video counts.
 
-    Both bin panels offer these in a dropdown instead of asking for a project name to
-    be typed by hand. The Picker wants every bin - an empty one is still a valid
-    target to save into - while the Long Builder passes ``videos_only`` because a bin
-    with no archived video can never become a film.
+    Scoped Picker menus only offer bins containing their corresponding card type.
+    The unscoped list retains empty bins; Long Builder uses ``videos_only``.
 
     ``updated_at`` and ``cover_url`` are what the card menu draws on each project; the
     cards themselves live in the index the counts already come from.
@@ -353,6 +351,8 @@ def list_projects_api(videos_only: bool = False, asset_kind: str = "") -> Dict[s
         cards = [c for c in index.get("clips", []) if isinstance(c, dict) and c.get("clip_id")]
         total_cards = len(cards)
         cards = filter_clips_by_kind(name, cards, asset_kind)
+        if asset_kind and not cards:
+            continue
         project_dir = get_project_dir(name)
         videos = sum(1 for c in cards
                      if _card_has_video(project_dir, c.get("clip_id"), c))

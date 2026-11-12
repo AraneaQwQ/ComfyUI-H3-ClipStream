@@ -87,12 +87,26 @@ class TestFilteredLists(IsolationFixture):
             self.assertEqual(project["clips"], 1)
             self.assertEqual(project["total_clips"], 2)
             self.assertIn(os.path.basename(expected), project["cover_url"])
-    def test_foreign_only_project_stays_selectable_but_empty(self):
+    def test_projects_without_matching_cards_are_hidden(self):
         self.dual(project="DualOnly")
-        project = api.list_projects_api(asset_kind="single")["projects"][0]
-        self.assertEqual(project["name"], "DualOnly")
-        self.assertEqual(project["clips"], 0)
-        self.assertEqual(project["cover_url"], "")
+        self.single(project="SingleOnly")
+        os.makedirs(cbm.get_project_dir("Empty"), exist_ok=True)
+        for kind, expected in (("single", ["SingleOnly"]), ("dual", ["DualOnly"])):
+            with self.subTest(kind=kind):
+                names = [p["name"] for p in api.list_projects_api(asset_kind=kind)["projects"]]
+                self.assertEqual(names, expected)
+        names = {p["name"] for p in api.list_projects_api()["projects"]}
+        self.assertEqual(names, {"DualOnly", "SingleOnly", "Empty"})
+
+    def test_project_visibility_tracks_matching_files(self):
+        _, folder, _ = self.single()
+        self.dual()
+        os.remove(os.path.join(folder, "latent.safetensors"))
+        self.assertEqual(api.list_projects_api(asset_kind="single")["projects"], [])
+        self.assertEqual(api.list_projects_api(asset_kind="dual")["projects"][0]["name"], "Mixed")
+        self.single(shot="NewSingle")
+        self.assertEqual(api.list_projects_api(asset_kind="single")["projects"][0]["name"], "Mixed")
+
     def test_rebuilt_index_keeps_isolation_and_existing_files(self):
         one, folder, _ = self.single()
         two, _, _ = self.dual()

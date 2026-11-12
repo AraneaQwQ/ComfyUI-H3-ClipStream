@@ -23,14 +23,17 @@ class Element {
     querySelector() { return new Element("span"); }
     querySelectorAll() { return []; }
     remove() {}
+    blur() {}
+    focus() {}
 }
+const elements = [];
 const calls = [];
 let extension;
 const signal = { aborted: false, addEventListener() {} };
 const context = vm.createContext({
     console, URL, setTimeout, clearTimeout,
     document: {
-        createElement: tag => new Element(tag),
+        createElement: tag => { const el = new Element(tag); elements.push(el); return el; },
         createDocumentFragment: () => new Element("fragment"),
         getElementById: () => null,
         addEventListener() {},
@@ -84,4 +87,15 @@ vm.runInContext("createProjectMenu({ node: testNode, widget: testNode.widgets[0]
                 Object.assign(context, { testNode: node(), testSignal: signal }));
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.ok(calls.includes("/minimax/clip_bin/projects?videos_only=1"), "Builder keeps its unfiltered video menu");
-console.log("Picker isolation UI: 6 assertions passed");
+for (const kind of ["single", "dual"]) {
+    const selected = node();
+    const menu = vm.runInContext("createProjectMenu({ node: testNode, widget: testNode.widgets[0], signal: testSignal, mode: 'picker', assetKind: testKind })",
+        Object.assign(context, { testNode: selected, testSignal: signal, testKind: kind }));
+    await menu.refresh();
+    const current = elements.filter(el => el.className === "minimax-project-current").at(-1);
+    current.onclick({ preventDefault() {}, stopPropagation() {} });
+    const grid = elements.filter(el => el.className === "minimax-project-grid").at(-1);
+    assert.equal(grid.children[0]?.className, "minimax-project-empty", `${kind} does not reinsert the active empty project`);
+    assert.equal(selected.widgets[0].value, "Mixed Project", "hidden project remains selected for initial generation");
+}
+console.log("Picker isolation UI: 10 assertions passed");

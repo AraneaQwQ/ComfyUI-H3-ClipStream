@@ -645,7 +645,7 @@ export function createProjectMenu({ node, widget, signal, mode = "picker", asset
         if (signal.aborted) return;
 
         const active = currentName();
-        if (!list.some(bin => bin.name === active)) {
+        if (!(mode === "picker" && assetKind) && !list.some(bin => bin.name === active)) {
             list.unshift({ name: active, clips: 0, videos: 0, cover_url: "", updated_at: "" });
         }
         const changed = JSON.stringify(list) !== JSON.stringify(bins);
