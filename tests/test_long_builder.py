@@ -161,11 +161,11 @@ class TestManualCardOrder(unittest.TestCase):
         order, _ = lb.resolve_shot_order(cards, clip_order="clip_c3,clip_c1")
         self.assertEqual(order, ["clip_c3", "clip_c1", "clip_c2", "clip_c4"])
 
-    def test_a_reference_that_is_no_longer_in_the_bin_is_reported_not_fatal(self):
+    def test_stale_order_references_are_ignored_without_warning(self):
         order, warnings = lb.resolve_shot_order(self.cards,
                                                clip_order="clip_gone,clip_c1,clip_c2")
         self.assertEqual(order, ["clip_c1", "clip_c2", "clip_c3"])
-        self.assertTrue(any("clip_gone" in w for w in warnings), warnings)
+        self.assertEqual(warnings, [])
 
     def test_a_card_listed_twice_joins_once(self):
         order, _ = lb.resolve_shot_order(self.cards, clip_order="clip_c1,clip_c2,clip_c1")

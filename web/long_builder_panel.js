@@ -11,7 +11,7 @@
 //   moves the node - only the fit button and the zoom buttons change its height
 // - the finished film on the node, which can be put away while the cards are arranged
 import { addPanel } from "./dom_panel.js";
-import { moveCard, pruneMissingExclusions, resolveDeckOrder, shotNumber } from "./long_builder_order.js";
+import { moveCard, projectCardState, pruneMissingExclusions, resolveDeckOrder, shotNumber } from "./long_builder_order.js";
 import { createProjectMenu } from "./project_menu.js";
 import {
     DECK_PAD_V,
@@ -592,14 +592,16 @@ function setupLongBuilderPanel(node) {
     const excluded = () => new Set(parseExcluded(excludeWidget?.value));
     const orderText = () => String(orderWidget?.value || "");
 
-    function pruneExclusions(cards) {
-        if (!excludeWidget) return;
-        const original = String(excludeWidget.value || "");
-        const cleaned = pruneMissingExclusions(original, cards);
-        if (cleaned === original) return;
-        excludeWidget.value = cleaned;
-        excludeWidget.callback?.(cleaned);
-        node.setDirtyCanvas?.(true, true);
+    function pruneReferences(cards) {
+        for (const widget of [excludeWidget, orderWidget]) {
+            if (!widget) continue;
+            const original = String(widget.value || "");
+            const cleaned = pruneMissingExclusions(original, cards);
+            if (cleaned === original) continue;
+            widget.value = cleaned;
+            widget.callback?.(cleaned);
+            node.setDirtyCanvas?.(true, true);
+        }
     }
 
     function setExcluded(clipId, off) {
@@ -695,8 +697,17 @@ function setupLongBuilderPanel(node) {
         orderHint.classList.toggle("h3-lb-order-manual", isManual);
         orderReset.hidden = !isManual;
     }
+    let stateProject = currentProject();
     let requestId = 0;
     async function loadCards() {
+        const projectNow = currentProject();
+        const state = projectCardState(stateProject, projectNow, orderWidget?.value, excludeWidget?.value);
+        if (stateProject !== projectNow) {
+            stateProject = projectNow;
+            if (orderWidget) orderWidget.value = state.order;
+            if (excludeWidget) excludeWidget.value = state.exclusions;
+            node.setDirtyCanvas?.(true, true);
+        }
         refreshSettings();
         const currentRequest = ++requestId;
         await projectMenu.refresh();
@@ -718,8 +729,9 @@ function setupLongBuilderPanel(node) {
                 return;
             }
             const data = await res.json();
+            if (signal.aborted || currentRequest !== requestId || project !== currentProject()) return;
             const cards = data.clips || [];
-            pruneExclusions(cards);
+            pruneReferences(cards);
             cardCount = cards.length;
             const offSet = excluded();
             const ordered = resolveDeckOrder(cards, orderText(), offSet);

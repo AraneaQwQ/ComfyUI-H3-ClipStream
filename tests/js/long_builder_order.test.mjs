@@ -6,7 +6,7 @@
 // another is the one failure this feature has to avoid.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { moveCard, pruneMissingExclusions, resolveDeckOrder } from "../../web/long_builder_order.js";
+import { moveCard, projectCardState, pruneMissingExclusions, resolveDeckOrder } from "../../web/long_builder_order.js";
 
 const none = new Set();
 const card = (clipId, shot, extra = {}) => ({ clip_id: clipId, shot_tag: shot, has_video: true, ...extra });
@@ -78,4 +78,14 @@ test("moveCard puts a card before or after the card under the pointer", () => {
 test("moving a card onto itself or onto an unknown card changes nothing", () => {
     assert.deepEqual(moveCard(["a", "b", "c"], "b", "b", true), ["a", "b", "c"]);
     assert.deepEqual(moveCard(["a", "b", "c"], "x", "a", true), ["a", "b", "c"]);
+});
+
+test("switching projects clears order and exclusions including shared shot tags", () => {
+    assert.deepEqual(projectCardState("Old", "New", "Shot 2,old_id", "Shot 1"), { order: "", exclusions: "" });
+});
+test("refreshing the same project preserves its manual decisions", () => {
+    assert.deepEqual(projectCardState("Same", "Same", "b,a", "c"), { order: "b,a", exclusions: "c" });
+});
+test("old workflow order is pruned while valid manual order survives", () => {
+    assert.equal(pruneMissingExclusions("old_id,b,a", [card("a", "Shot 1"), card("b", "Shot 2")]), "b,a");
 });
