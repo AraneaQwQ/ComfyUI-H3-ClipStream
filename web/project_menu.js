@@ -67,8 +67,13 @@ function makeElement(tag, className, text) {
     return element;
 }
 
-export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
-    const config = MODE_CONFIG[mode] ?? MODE_CONFIG.picker;
+export function createProjectMenu({ node, widget, signal, mode = "picker", assetKind = "" }) {
+    const config = { ...(MODE_CONFIG[mode] ?? MODE_CONFIG.picker) };
+    if (mode === "picker" && assetKind) {
+        config.listUrl += `?asset_kind=${assetKind}`;
+        config.label = assetKind === "dual" ? "🎞️ Dual 项目素材库" : "🎞️ 普通项目素材库";
+        config.empty = assetKind === "dual" ? "无 Dual 卡片" : "无普通卡片";
+    }
     let bins = [];
     let currentPaintKey = "";
     let inFlight = null;
@@ -274,6 +279,9 @@ export function createProjectMenu({ node, widget, signal, mode = "picker" }) {
     }
 
     function deleteWarning(name, bin) {
+        if (mode === "picker" && assetKind) {
+            return `删除「${name}」会删掉整个项目的 ${bin.total_clips ?? bin.clips ?? 0} 张卡片，包含普通版和 Dual 版，此操作不可撤销。`;
+        }
         const cards = rawCount(bin, "clips");
         const videos = rawCount(bin, "videos");
         if (!cards) return `删除「${name}」会删掉这个空的素材库文件夹，此操作不可撤销。`;

@@ -46,7 +46,7 @@ app.registerExtension({
             if (this.size[0] < 320 || this.size[1] < 200) {
                 this.setSize([Math.max(this.size[0], 320), Math.max(this.size[1], 200)]);
             }
-            setupClipBinPickerWidget(this);
+            setupClipBinPickerWidget(this, nodeData.name === "MiniMaxClipBinDualPicker" ? "dual" : "single");
             if (nodeData.name === "MiniMaxClipBinDualPicker") {
                 // Leave room for seven outputs, controls and the card gallery.
                 // Only creation sets this default; saved workflow sizes win later.
@@ -89,7 +89,7 @@ function dualVariantName(label, clip) {
     return label;
 }
 
-function setupClipBinPickerWidget(node) {
+function setupClipBinPickerWidget(node, assetKind) {
     // Find relevant widgets
     const projectWidget = node.widgets?.find(w => w.name === "project_name");
     const selectionWidget = node.widgets?.find(w => w.name === "clip_selection");
@@ -253,7 +253,7 @@ function setupClipBinPickerWidget(node) {
 
     // Library selection sits above the mode row: the story is chosen before the run
     // mode, and both the card grid and the Long Builder read the same paint.
-    const projectMenu = createProjectMenu({ node, widget: projectWidget, signal, mode: "picker" });
+    const projectMenu = createProjectMenu({ node, widget: projectWidget, signal, mode: "picker", assetKind });
     container.insertBefore(projectMenu.element, container.firstChild);
 
     node.imgs = null;
@@ -432,7 +432,7 @@ function setupClipBinPickerWidget(node) {
         updateSelectionDisplay(currentSelection);
 
         try {
-            const res = await api.fetchApi(`/minimax/clip_bin/list?project=${encodeURIComponent(currentProject)}`, { cache: "no-store" });
+            const res = await api.fetchApi(`/minimax/clip_bin/list?project=${encodeURIComponent(currentProject)}&asset_kind=${assetKind}`, { cache: "no-store" });
             if (signal.aborted || currentRequest !== requestId) return;
             if (!res.ok) {
                 releasePreviews();

@@ -3,6 +3,16 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
+## 2026-11-12 · 普通与 Dual Picker 严格隔离
+
+- 基线：本地开发提交 `3d01325`；修改前完整 Git 快照：`archive/2026-11-12-3d01325-pre-picker-isolation/clipstream-3d01325.zip`。
+- 按实际 latent 文件格式区分普通 Saver 与 Dual Saver；Dual 只有一采或只有二采时仍按 Dual 处理。混放两种 latent 命名的异常文件夹不自动归类，也不读取。
+- 普通与 Dual Picker 的卡片列表、项目内卡片计数、封面、Auto 最新、Strict 接续、手填 ID 与自定义路径统一执行类型隔离；Dual 磁盘扫描不再引入普通卡片，移除将普通 latent 当作一采读取的兼容分支。
+- 仅存在另一类卡片时，Auto/latest 输出首段空 latent，Strict 与手动选择不可读卡片时明确拒绝。两组节点的 ID、输入与输出顺序保持不变。
+- 素材及共享项目索引不迁移、不删除；项目菜单仍可选择空库。删除项目确认显示全项目总数，并明确包含普通与 Dual 卡片。Long Builder 的混合项目视频列表及拼接代码未改动。
+- 验证：完整 Python `python -B -m unittest discover -s tests -t .` 共 **257 项，256 通过、1 项既有权限跳过**；新增类型隔离专项 21 项通过。原有前端 **32 项通过**，新增真实面板初始化及请求隔离 **6 条断言通过**；全部 9 个 `web/*.js` 语法检查及 Python AST、`git diff --check` 通过。
+- 状态：仅本地开发与提交，未推送 GitHub，未部署到 ComfyUI 运行目录；浏览器和真实工作流待后续部署后实测。之前重叠恢复节点的测试与推送限制继续保留。
+
 ## 2026-11-12 · 二采后原始重叠 token 恢复节点
 
 - 基线：当前运行副本干净提交 `6d9b18d`；旧 `projects` 副本仍为 `6eb3344`，本次未用旧副本覆盖当前功能。开发副本在 `C:\Users\az\Documents\ChatGPT\插件维护\ComfyUI-H3-ClipStream`。

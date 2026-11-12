@@ -28,6 +28,8 @@ from .dual_manager import (
 )
 from .clip_bin_manager import (
     load_project_index,
+    filter_clips_by_kind,
+    clip_asset_kind,
     pil_to_tensor,
     create_placeholder_card,
 )
@@ -154,10 +156,10 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
             display_name='MiniMax H3 Dual Clip Picker (一采+二采)',
             category='MiniMaxH3/ClipStream',
             inputs=[
-                io.String.Input('project_name', default=default_proj, tooltip='【项目库】要读取的 Clip Bin 项目文件夹名称'),
+                io.String.Input('project_name', default=default_proj, tooltip='【项目库】仅读取 Dual Clip Saver 保存的卡片；普通 Saver 卡片不作为接续源'),
                 io.Combo.Input('mode', options=['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制首段，无上下文)', 'Strict Chaining (严格接续，空库报错)'], default='Auto (首段全新 / 后续自动接续)', tooltip='【运行模式】\n• Auto：空库自动首段；非空自动接续最新\n• Force Initial：强制首段\n• Strict：空库报错'),
                 io.String.Input('clip_selection', default='latest', tooltip="【镜头定位】'latest' = 自动最新；或填 clip_id / shot 名称精确匹配"),
-                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义路径】直接指定磁盘上的卡片文件夹绝对路径'),
+                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义路径】指定 Dual Clip Saver 卡片文件夹，拒绝普通 Saver 卡片'),
             ],
             outputs=[
                 io.Latent.Output(display_name='latent_一采'),
@@ -197,7 +199,7 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
             # Try the project index
             try:
                 idx = load_project_index(proj)
-                clips = idx.get("clips", [])
+                clips = filter_clips_by_kind(proj, idx.get("clips", []), "dual")
                 if clips:
                     logger.info("[Dual Picker] Found %d clip(s) in index for '%s'", len(clips), proj)
                     return clips
@@ -215,9 +217,7 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
                         if not os.path.isdir(entry_path) or entry.startswith("."):
                             continue
                         # Check if this is a valid dual clip folder (has at least one variant latent)
-                        if (os.path.isfile(os.path.join(entry_path, "latent_一采.safetensors")) or
-                                os.path.isfile(os.path.join(entry_path, "latent_二采.safetensors")) or
-                                os.path.isfile(os.path.join(entry_path, "latent.safetensors"))):
+                        if clip_asset_kind(entry_path) == "dual":
                             meta_path = os.path.join(entry_path, "meta.json")
                             meta = {"clip_id": entry, "shot_tag": entry}
                             if os.path.isfile(meta_path):
@@ -236,7 +236,8 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
 
         # --- Initial / Force Initial mode ---
         is_initial = mode.startswith("Force Initial")
-        if not is_initial and mode.startswith("Auto"):
+        auto_latest = (clip_selection or "latest").strip().lower() in ("latest", "", "0", "auto", "default")
+        if not is_initial and mode.startswith("Auto") and auto_latest and not (custom_p and os.path.isdir(custom_p)):
             clips_check = _find_clips(p_name)
             if len(clips_check) == 0:
                 is_initial = True
@@ -248,7 +249,7 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
             return io.NodeOutput(None, None, placeholder, placeholder, '[INITIAL]', p_name, '', ui={'images': []})
 
         # --- Strict mode with empty bin ---
-        if mode.startswith("Strict"):
+        if mode.startswith("Strict") and not (custom_p and os.path.isdir(custom_p)):
             if not _find_clips(p_name):
                 raise ValueError(f"DualPicker: 项目 '{p_name}' 无卡片。请用 Auto 模式生成首段。")
 

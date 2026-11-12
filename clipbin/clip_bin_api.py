@@ -26,6 +26,7 @@ from .clip_bin_manager import (
     atomic_write_json,
     list_projects,
     load_project_index,
+    filter_clips_by_kind,
     save_project_index,
     rebuild_project_index,
     probe_video_duration,
@@ -177,7 +178,7 @@ def _persist_clip_entry(project_name: str, clip_id: str, entry: Dict[str, Any]) 
 
 @project_locked
 def get_project_clips_api(project_name: str, variant_policy: str = "",
-                        want_probe: bool = False) -> Dict[str, Any]:
+                        want_probe: bool = False, asset_kind: str = "") -> Dict[str, Any]:
     """Retrieves full clip metadata and relative thumbnail paths for the frontend.
 
     ``variant_policy`` is optional: when the Long Builder passes its own policy, each
@@ -191,7 +192,7 @@ def get_project_clips_api(project_name: str, variant_policy: str = "",
     """
     p_name = (project_name or "Default_Project").strip()
     idx = load_project_index(p_name)
-    clips = idx.get("clips", [])
+    clips = filter_clips_by_kind(p_name, idx.get("clips", []), asset_kind)
 
     base_dir = folder_paths.get_output_directory() if folder_paths is not None else "output"
     project_dir = get_project_dir(p_name)
@@ -335,7 +336,7 @@ def _project_cover_url(project_dir: str, project_name: str, cards: List[Dict[str
     return ""
 
 
-def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
+def list_projects_api(videos_only: bool = False, asset_kind: str = "") -> Dict[str, Any]:
     """Lists project bins with their card and archived-video counts.
 
     Both bin panels offer these in a dropdown instead of asking for a project name to
@@ -350,6 +351,8 @@ def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
     for name in list_projects():
         index = load_project_index(name)
         cards = [c for c in index.get("clips", []) if isinstance(c, dict) and c.get("clip_id")]
+        total_cards = len(cards)
+        cards = filter_clips_by_kind(name, cards, asset_kind)
         project_dir = get_project_dir(name)
         videos = sum(1 for c in cards
                      if _card_has_video(project_dir, c.get("clip_id"), c))
@@ -358,6 +361,7 @@ def list_projects_api(videos_only: bool = False) -> Dict[str, Any]:
         projects.append({
             "name": name,
             "clips": len(cards),
+            "total_clips": total_cards,
             "videos": videos,
             "updated_at": str(index.get("last_updated") or ""),
             "cover_url": _project_cover_url(project_dir, name, cards),
@@ -394,14 +398,20 @@ def register_clip_bin_routes() -> None:
         project = request.rel_url.query.get("project", "Default_Project")
         variant_policy = request.rel_url.query.get("variant_policy", "")
         want_probe = request.rel_url.query.get("probe", "").strip().lower() in ("1", "true", "yes")
-        data = await asyncio.to_thread(get_project_clips_api, project, variant_policy, want_probe)
+        asset_kind = request.rel_url.query.get("asset_kind", "")
+        if asset_kind not in ("", "single", "dual"):
+            raise web.HTTPBadRequest(text="asset_kind must be single or dual")
+        data = await asyncio.to_thread(get_project_clips_api, project, variant_policy, want_probe, asset_kind)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
 
 
     @routes.get("/minimax/clip_bin/projects")
     async def handle_projects(request):
         videos_only = (request.rel_url.query.get("videos_only") or "").lower() in ("1", "true", "yes")
-        data = await asyncio.to_thread(list_projects_api, videos_only)
+        asset_kind = request.rel_url.query.get("asset_kind", "")
+        if asset_kind not in ("", "single", "dual"):
+            raise web.HTTPBadRequest(text="asset_kind must be single or dual")
+        data = await asyncio.to_thread(list_projects_api, videos_only, asset_kind)
         return web.json_response(data, headers={"Cache-Control": "no-store"})
 
     @routes.post("/minimax/clip_bin/project")

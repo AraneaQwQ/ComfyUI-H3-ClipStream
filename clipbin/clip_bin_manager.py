@@ -896,6 +896,33 @@ def save_clip_asset(
     return meta_obj, clip_dir, preview_pil
 
 
+def clip_asset_kind(clip_dir: str) -> str:
+    """Identify a Saver format by its latent files; mixed folders are ambiguous."""
+    single = os.path.isfile(os.path.join(clip_dir, "latent.safetensors"))
+    dual = any(os.path.isfile(os.path.join(clip_dir, f"latent_{v}.safetensors"))
+               for v in ("一采", "二采"))
+    if single == dual:
+        return ""
+    return "single" if single else "dual"
+
+
+def require_clip_kind(clip_dir: str, asset_kind: str) -> None:
+    if clip_asset_kind(clip_dir) != asset_kind:
+        saver = "普通 Clip Bin Saver" if asset_kind == "single" else "Dual Clip Saver"
+        raise ValueError(f"此 Picker 只能读取{saver}保存的素材；卡片类型不匹配或 latent 文件缺失。")
+
+
+def filter_clips_by_kind(project_name: str, clips: list, asset_kind: str = "") -> list:
+    """Filter without rewriting the shared project index used by the Long Builder."""
+    if not asset_kind:
+        return clips
+    if asset_kind not in ("single", "dual"):
+        raise ValueError("asset_kind must be single or dual")
+    project_dir = get_project_dir(project_name)
+    return [c for c in clips if isinstance(c, dict) and c.get("clip_id")
+            and clip_asset_kind(os.path.join(project_dir, c["clip_id"])) == asset_kind]
+
+
 @project_locked
 def load_clip_asset(project_name: str, clip_id: str) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]]:
     """Loads a clip asset completely from disk.
@@ -908,10 +935,8 @@ def load_clip_asset(project_name: str, clip_id: str) -> Tuple[torch.Tensor, Opti
     if not os.path.isdir(clip_dir):
         raise FileNotFoundError(f"[Clip Bin] Asset directory not found: '{clip_dir}'")
 
+    require_clip_kind(clip_dir, "single")
     latent_file = os.path.join(clip_dir, "latent.safetensors")
-    if not os.path.isfile(latent_file):
-        raise FileNotFoundError(f"[Clip Bin] Latent file not found: '{latent_file}'")
-
     if st_load is not None:
         tensors = st_load(latent_file, device="cpu")
     else:

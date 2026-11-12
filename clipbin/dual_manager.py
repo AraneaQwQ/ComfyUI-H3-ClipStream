@@ -50,6 +50,7 @@ from ._shared import (
 )
 from .clip_bin_manager import (
     get_project_dir,
+    require_clip_kind,
     project_locked,
     load_project_index,
     upsert_clip_into_index,
@@ -306,6 +307,8 @@ def load_dual_clip_asset(project_name: str, clip_id: str) -> Dict[str, Any]:
     if not os.path.isdir(clip_dir):
         raise FileNotFoundError(f"[Dual Clip Bin] Directory not found: '{clip_dir}'")
 
+    require_clip_kind(clip_dir, "dual")
+
     # Load meta
     meta_dict = {}
     meta_json_path = os.path.join(clip_dir, "meta.json")
@@ -323,13 +326,6 @@ def load_dual_clip_asset(project_name: str, clip_id: str) -> Dict[str, Any]:
         latent_file = os.path.join(clip_dir, f"latent_{variant_name}.safetensors")
         vdata: Dict[str, Any] = {"has_latent": False, "latent": None, "first_frame": None, "tail_frame": None}
 
-        # Backward compatibility: if variant file not found, try the legacy "latent.safetensors"
-        # (clips saved by the original MiniMaxClipBinSaver use a single "latent.safetensors")
-        if not os.path.isfile(latent_file) and variant_name == "一采":
-            legacy_file = os.path.join(clip_dir, "latent.safetensors")
-            if os.path.isfile(legacy_file):
-                latent_file = legacy_file
-
         if os.path.isfile(latent_file):
             if st_load is not None:
                 tensors = st_load(latent_file, device="cpu")
@@ -342,17 +338,9 @@ def load_dual_clip_asset(project_name: str, clip_id: str) -> Dict[str, Any]:
                 vdata["has_latent"] = True
                 vdata["latent"] = pack_av_latent(video, audio)
 
-        # Load keyframes — try variant-specific first, fall back to legacy names
+        # Keyframes belong to the same Saver format as the latent.
         first_path = os.path.join(clip_dir, f"first_frame_{variant_name}.png")
         tail_path = os.path.join(clip_dir, f"tail_frame_{variant_name}.png")
-        if not os.path.isfile(first_path):
-            legacy_first = os.path.join(clip_dir, "first_frame.png")
-            if os.path.isfile(legacy_first):
-                first_path = legacy_first
-        if not os.path.isfile(tail_path):
-            legacy_tail = os.path.join(clip_dir, "tail_frame.png")
-            if os.path.isfile(legacy_tail):
-                tail_path = legacy_tail
 
         if os.path.isfile(first_path):
             vdata["first_frame"] = pil_to_tensor(Image.open(first_path))
