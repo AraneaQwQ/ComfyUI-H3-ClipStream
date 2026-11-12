@@ -141,17 +141,22 @@ class TestPickerExecution(IsolationFixture):
                                        ("dual", "SingleOnly", one.clip_id)):
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 self.select(kind, project=project, clip_selection=clip_id)
-    def test_foreign_custom_path_rejected_even_in_auto(self):
-        _, single_dir, _ = self.single(project="SingleOnly")
-        _, dual_dir, _ = self.dual(project="DualOnly")
-        for kind, foreign in (("single", dual_dir), ("dual", single_dir)):
-            with self.subTest(kind=kind), self.assertRaises(ValueError):
-                self.select(kind, custom_clip_path=foreign)
-    def test_custom_path_accepts_own_format(self):
+    def test_legacy_path_values_cannot_override_project_selection(self):
         one, single_dir, _ = self.single(project="SingleOnly")
         two, dual_dir, _ = self.dual(project="DualOnly")
-        self.assertEqual(self.select("single", custom_clip_path=single_dir)[4], one.clip_id)
-        self.assertEqual(self.select("dual", custom_clip_path=dual_dir)[4], two.clip_id)
+        self.assertEqual(self.select("single", project="SingleOnly", custom_clip_path=dual_dir)[4], one.clip_id)
+        self.assertEqual(self.select("dual", project="DualOnly", custom_clip_path=single_dir)[4], two.clip_id)
+    def test_absolute_paths_in_selection_are_not_loaded(self):
+        _, single_dir, _ = self.single()
+        _, dual_dir, _ = self.dual()
+        for kind, path in (("single", single_dir), ("dual", dual_dir)):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.select(kind, clip_selection=path)
+    def test_legacy_path_does_not_override_force_initial(self):
+        _, single_dir, _ = self.single()
+        _, dual_dir, _ = self.dual()
+        for kind, path in (("single", single_dir), ("dual", dual_dir)):
+            self.assertIsNone(self.select(kind, mode="Force Initial", custom_clip_path=path)[0])
     def test_dual_disk_scan_does_not_reintroduce_single(self):
         self.single()
         with mock.patch.object(dual_nodes, "load_project_index", side_effect=OSError("index unavailable")):

@@ -159,7 +159,6 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
                 io.String.Input('project_name', default=default_proj, tooltip='【项目库】仅读取 Dual Clip Saver 保存的卡片；普通 Saver 卡片不作为接续源'),
                 io.Combo.Input('mode', options=['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制首段，无上下文)', 'Strict Chaining (严格接续，空库报错)'], default='Auto (首段全新 / 后续自动接续)', tooltip='【运行模式】\n• Auto：空库自动首段；非空自动接续最新\n• Force Initial：强制首段\n• Strict：空库报错'),
                 io.String.Input('clip_selection', default='latest', tooltip="【镜头定位】'latest' = 自动最新；或填 clip_id / shot 名称精确匹配"),
-                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义路径】指定 Dual Clip Saver 卡片文件夹，拒绝普通 Saver 卡片'),
             ],
             outputs=[
                 io.Latent.Output(display_name='latent_一采'),
@@ -187,11 +186,9 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
         project_name: str = "Default_Project",
         mode: str = "Auto (首段全新 / 后续自动接续)",
         clip_selection: str = "latest",
-        custom_clip_path: str = "",
         **kwargs
     ) -> io.NodeOutput:
         p_name = (project_name or "Default_Project").strip()
-        custom_p = (custom_clip_path or "").strip().strip('"').strip("'")
 
         # --- Helper: find clips from index OR by scanning disk ---
         def _find_clips(proj: str) -> List[Dict[str, Any]]:
@@ -237,7 +234,7 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
         # --- Initial / Force Initial mode ---
         is_initial = mode.startswith("Force Initial")
         auto_latest = (clip_selection or "latest").strip().lower() in ("latest", "", "0", "auto", "default")
-        if not is_initial and mode.startswith("Auto") and auto_latest and not (custom_p and os.path.isdir(custom_p)):
+        if not is_initial and mode.startswith("Auto") and auto_latest:
             clips_check = _find_clips(p_name)
             if len(clips_check) == 0:
                 is_initial = True
@@ -249,26 +246,24 @@ class MiniMaxClipBinDualPickerNode(io.ComfyNode):
             return io.NodeOutput(None, None, placeholder, placeholder, '[INITIAL]', p_name, '', ui={'images': []})
 
         # --- Strict mode with empty bin ---
-        if mode.startswith("Strict") and not (custom_p and os.path.isdir(custom_p)):
+        if mode.startswith("Strict"):
             if not _find_clips(p_name):
                 raise ValueError(f"DualPicker: 项目 '{p_name}' 无卡片。请用 Auto 模式生成首段。")
 
         # --- Resolve target clip ---
-        if custom_p and os.path.isdir(custom_p):
-            target_clip_id = os.path.basename(custom_p)
-            p_name = os.path.basename(os.path.dirname(custom_p)) or p_name
-        else:
-            clips = _find_clips(p_name)
-            if not clips:
-                raise ValueError(f"DualPicker: 项目 '{p_name}' 无卡片。")
+        clips = _find_clips(p_name)
+        if not clips:
+            raise ValueError(f"DualPicker: 项目 '{p_name}' 无卡片。")
 
-            sel = (clip_selection or "latest").strip()
-            if sel.lower() in ("latest", "", "0", "auto", "default"):
-                target_clip_id = clips[0]["clip_id"]
-            else:
-                matched = [c for c in clips if sel in c.get("clip_id", "") or sel in c.get("shot_tag", "")]
-                target_clip_id = matched[0]["clip_id"] if matched else sel
-            logger.info("[Dual Picker] Resolved target: '%s' (from %d clips, sel='%s')", target_clip_id, len(clips), sel)
+        sel = (clip_selection or "latest").strip()
+        if sel.lower() in ("latest", "", "0", "auto", "default"):
+            target_clip_id = clips[0]["clip_id"]
+        else:
+            matched = [c for c in clips if sel in c.get("clip_id", "") or sel in c.get("shot_tag", "")]
+            if not matched:
+                raise ValueError("Dual Picker 在当前项目中找不到匹配卡片，请从卡片列表选择。")
+            target_clip_id = matched[0]["clip_id"]
+        logger.info("[Dual Picker] Resolved target: '%s' (from %d clips, sel='%s')", target_clip_id, len(clips), sel)
 
         # --- Load dual asset ---
         data = load_dual_clip_asset(p_name, target_clip_id)

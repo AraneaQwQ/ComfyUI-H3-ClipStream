@@ -10,7 +10,7 @@ Long Builder stitches a project's archived shots into one film — pick the proj
 
 ## English
 
-**Picker isolation:** the ordinary Picker only loads cards saved by the ordinary Clip Bin Saver; the Dual Picker only loads Dual Saver cards, including cards with just one pass. Galleries, counts, covers and automatic continuation follow the same rule. A manually entered clip ID or path cannot cross formats. Existing files stay in place, and a shared project may contain both types. Deleting a project still deletes the whole project, including both types.
+**Picker isolation:** the ordinary Picker only loads cards saved by the ordinary Clip Bin Saver; the Dual Picker only loads Dual Saver cards, including cards with just one pass. Galleries, counts, covers and automatic continuation follow the same rule. A manually entered clip ID cannot cross formats. Pickers load clips through the project gallery; absolute-path input is no longer available. Existing files stay in place, and a shared project may contain both types. Deleting a project still deletes the whole project, including both types.
 
 > **One plugin, two jobs:** a **visual, searchable Clip Bin** for MiniMax H3, plus **seamless audio-video continuation** (Motion-Context) between shots.
 
@@ -335,7 +335,7 @@ ComfyUI-H3-ClipStream/
 
 ## 简体中文
 
-**Picker 类型隔离：**普通 Picker 只读取普通 Clip Bin Saver 卡片，Dual Picker 只读取 Dual Saver 卡片（仅保存一采或二采也属于 Dual）。卡片列表、数量、封面和自动接续均按同一规则筛选，手填卡片 ID 或路径也不能跨类型读取。已有文件保留原位，同一项目可同时存放两种卡片；删除整个项目仍会删除两种卡片。
+**Picker 类型隔离：**普通 Picker 只读取普通 Clip Bin Saver 卡片，Dual Picker 只读取 Dual Saver 卡片（仅保存一采或二采也属于 Dual）。卡片列表、数量、封面和自动接续均按同一规则筛选，手填卡片 ID 也不能跨类型读取。Picker 统一通过项目库选片，已移除绝对路径输入。已有文件保留原位，同一项目可同时存放两种卡片；删除整个项目仍会删除两种卡片。
 
 > **一个插件，两件事：** 给 MiniMax H3 一个**可视化、可搜索的镜头素材库（Clip Bin）**，并让镜头之间**音画无缝接续（Motion-Context）**。
 

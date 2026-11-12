@@ -3,6 +3,14 @@
 > 版本铁规：每次改动前，把旧版本完整快照存入 `archive/<日期>-<commit 短 hash>/`，并在本文件顶部追加一条说明。
 > 只有用户的明确命令才能删改 `archive/` 中的旧版本。
 
+## 2026-11-12 · 移除两个 Picker 的绝对路径输入
+
+- 用户要求关闭无人使用的绝对路径入口。普通 Picker 与 Dual Picker 移除 `custom_clip_path` schema 输入及路径覆盖分支，统一通过项目库和卡片 ID/标签选片；未匹配当前项目卡片的输入不再作为文件夹路径读取。
+- 旧工作流残留的路径值可由既有 `**kwargs` 接收但不再使用，不会覆盖项目选择或 Force Initial。其余输入及输出顺序不变，普通与 Dual 类型隔离继续有效。
+- 修改前快照：`archive/2026-11-12-b90f36d-pre-remove-picker-path/clipstream-b90f36d.zip`。
+- 验证：完整 Python 回归 258 项，257 通过、1 项既有权限跳过；其中隔离与旧路径残留专项 22 项通过，节点 schema 验证确认路径输入已移除。Python AST 与 `git diff --check` 通过。
+- 延续本轮用户部署测试要求，部署仅需 `clipbin/nodes.py`、`clipbin/dual_nodes.py`；实际部署及备份记录见全局 CHANGELOG.md。未推送 GitHub，未修改用户工作流文件。
+
 ## 2026-11-12 · 普通与 Dual Picker 严格隔离
 
 - 基线：本地开发提交 `3d01325`；修改前完整 Git 快照：`archive/2026-11-12-3d01325-pre-picker-isolation/clipstream-3d01325.zip`。

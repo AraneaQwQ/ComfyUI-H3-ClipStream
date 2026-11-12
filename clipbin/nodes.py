@@ -174,7 +174,6 @@ class MiniMaxClipBinPickerNode(io.ComfyNode):
                 io.String.Input('project_name', default=default_proj, tooltip='【选择项目库】仅读取普通 Clip Bin Saver 保存的卡片。项目文件夹名称（如 Default_Project）。可在 ComfyUI 运行控制台查看已存在的项目名称列表'),
                 io.Combo.Input('mode', options=['Auto (首段全新 / 后续自动接续)', 'Force Initial (强制新建首段，无上下文)', 'Strict Chaining (必须接续指定或最新镜头)'], default='Auto (首段全新 / 后续自动接续)', tooltip='【运行工作模式】\n• Auto（强烈推荐）：若项目库为空自动作为首段全新生成；后续运行时全自动接续上一段，无需任何拔线或手动操作！\n• Force Initial：强制开辟首段，忽略库内所有历史素材。\n• Strict Chaining：严格接续模式，库内无镜头时直接报错提示'),
                 io.String.Input('clip_selection', default='latest', tooltip="【镜头定位】\n• 填 'latest'（默认）：自动调取最新生成的镜头进行无缝接续\n• 填 clip_id（如 clip_20260908...）：精确跳转或回溯到指定的历史镜头开启新分支\n• 填 shot 名称：按镜头标签名称匹配"),
-                io.String.Input('custom_clip_path', optional=True, default='', tooltip='【自定义物理路径覆盖】可选高级选项。填入绝对路径仅接受普通 Clip Bin Saver 保存的镜头文件夹'),
             ],
             outputs=[
                 io.Latent.Output(display_name='latent'),
@@ -201,48 +200,41 @@ class MiniMaxClipBinPickerNode(io.ComfyNode):
         project_name: str = "Default_Project",
         mode: str = "Auto (首段全新 / 后续自动接续)",
         clip_selection: str = "latest",
-        custom_clip_path: str = "",
         **kwargs
     ) -> io.NodeOutput:
         p_name = (project_name or "Default_Project").strip()
-        custom_p = (custom_clip_path or "").strip().strip('"').strip("'")
 
-        if custom_p and os.path.isdir(custom_p):
-            target_clip_dir = custom_p
-            p_name = os.path.basename(os.path.dirname(custom_p)) or p_name
-            target_clip_id = os.path.basename(custom_p)
+        idx = load_project_index(p_name)
+        clips = filter_clips_by_kind(p_name, idx.get("clips", []), "single")
+
+        # Initial (no-context) generation: Force Initial, or Auto with an empty bin.
+        selection = (clip_selection or "latest").strip().lower()
+        auto_latest = selection in ("latest", "", "0", "auto", "default")
+        is_initial_mode = mode.startswith("Force Initial") or (
+            mode.startswith("Auto") and not clips and auto_latest)
+
+        if is_initial_mode:
+            logger.info("[Clip Bin Picker] Initial generation for project '%s' (mode: %s).", p_name, mode)
+            card = create_placeholder_card("✨ Initial Clip Mode", f"Project: {p_name} | Ready for First Clip (No Context)")
+            placeholder_tensor = pil_to_tensor(card)
+            return io.NodeOutput(None, placeholder_tensor, placeholder_tensor, '', '[INITIAL_GENERATION]', p_name, ui={'images': []})
+
+        # Strict Chaining with an empty bin -> loud failure.
+        if not clips:
+            raise ValueError(f"MiniMaxClipBinPicker: No clips found in project '{p_name}'. "
+                             f"Switch mode to 'Auto' to generate the first clip.")
+
+        sel = (clip_selection or "latest").strip()
+        if sel.lower() in ("latest", "", "0", "auto", "default"):
+            target_clip = clips[0]
+            target_clip_id = target_clip["clip_id"]
         else:
-            idx = load_project_index(p_name)
-            clips = filter_clips_by_kind(p_name, idx.get("clips", []), "single")
-
-            # Initial (no-context) generation: Force Initial, or Auto with an empty bin.
-            selection = (clip_selection or "latest").strip().lower()
-            auto_latest = selection in ("latest", "", "0", "auto", "default")
-            is_initial_mode = mode.startswith("Force Initial") or (
-                mode.startswith("Auto") and not clips and auto_latest)
-
-            if is_initial_mode:
-                logger.info("[Clip Bin Picker] Initial generation for project '%s' (mode: %s).", p_name, mode)
-                card = create_placeholder_card("✨ Initial Clip Mode", f"Project: {p_name} | Ready for First Clip (No Context)")
-                placeholder_tensor = pil_to_tensor(card)
-                return io.NodeOutput(None, placeholder_tensor, placeholder_tensor, '', '[INITIAL_GENERATION]', p_name, ui={'images': []})
-
-            # Strict Chaining with an empty bin -> loud failure.
-            if not clips:
-                raise ValueError(f"MiniMaxClipBinPicker: No clips found in project '{p_name}'. "
-                                 f"Switch mode to 'Auto' to generate the first clip.")
-
-            sel = (clip_selection or "latest").strip()
-            if sel.lower() in ("latest", "", "0", "auto", "default"):
-                target_clip = clips[0]
-                target_clip_id = target_clip["clip_id"]
+            # Substring / exact match
+            matched = [c for c in clips if sel in c.get("clip_id", "") or sel in c.get("shot_tag", "")]
+            if matched:
+                target_clip_id = matched[0]["clip_id"]
             else:
-                # Substring / exact match
-                matched = [c for c in clips if sel in c.get("clip_id", "") or sel in c.get("shot_tag", "")]
-                if matched:
-                    target_clip_id = matched[0]["clip_id"]
-                else:
-                    target_clip_id = sel
+                raise ValueError("普通 Picker 在当前项目中找不到匹配卡片，请从卡片列表选择。")
 
         video, audio, tail_tensor, first_tensor, meta_dict = load_clip_asset(p_name, target_clip_id)
         out_latent = pack_av_latent(video, audio)
